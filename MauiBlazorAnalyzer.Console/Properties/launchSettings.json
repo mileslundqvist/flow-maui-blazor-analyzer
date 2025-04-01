@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "MauiBlazorAnalyzer.Console": {
+      "commandName": "Project",
+      "commandLineArgs": "--input-path \"C:\\Users\\miles\\source\\repos\\MauiApp1\\MauiApp1.sln\""
+    }
+  }
+}

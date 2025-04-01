@@ -1,2 +1,113 @@
-﻿// See https://aka.ms/new-console-template for more information
-Console.WriteLine("Hello, World!");
+﻿
+using MauiBlazorAnalyzer.Application;
+using MauiBlazorAnalyzer.Core;
+using MauiBlazorAnalyzer.Core.Rules;
+using MauiBlazorAnalyzer.Infrastructure;
+using Microsoft.Build.Locator;
+using Microsoft.CodeAnalysis;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using System.CommandLine;
+
+class Program
+{
+    static async Task<int> Main(string[] args)
+    {
+        // --- MSBuild Locator ---
+        if (!MSBuildLocator.IsRegistered)
+        {
+            var instance = MSBuildLocator.QueryVisualStudioInstances().OrderByDescending(i => i.Version).FirstOrDefault();
+            if (instance == null)
+            {
+                Console.Error.WriteLine("Error: No compatible MSBuild instance found. Ensure .NET SDK is installed.");
+                return 1;
+            }
+            MSBuildLocator.RegisterInstance(instance);
+        }
+
+        // --- Command Line Parsing (using System.CommandLine) ---
+        var inputPathOption = new Option<string>(
+            name: "--input-path",
+            description: "Path to the .sln or .csproj file to analyze.")
+        { IsRequired = true };
+
+        var outputFormatOption = new Option<string>(
+            name: "--output-format",
+            description: "Output format (e.g., console, json).",
+            getDefaultValue: () => "console");
+
+        var outputPathOption = new Option<string?>(
+           name: "--output-path",
+           description: "Path for output file (required for formats other than console).");
+
+        var severityOption = new Option<DiagnosticSeverity>(
+            name: "--severity",
+            description: "Minimum severity to report (Hidden, Info, Warning, Error).",
+            getDefaultValue: () => DiagnosticSeverity.Info);
+
+        var rootCommand = new RootCommand("Maui Blazor Static Analyzer");
+        rootCommand.AddOption(inputPathOption);
+        rootCommand.AddOption(outputFormatOption);
+        rootCommand.AddOption(outputPathOption);
+        rootCommand.AddOption(severityOption);
+
+        rootCommand.SetHandler(async (context) =>
+        {
+            var options = new AnalysisOptions
+            {
+                InputPath = context.ParseResult.GetValueForOption(inputPathOption)!,
+                OutputFormat = context.ParseResult.GetValueForOption(outputFormatOption)!,
+                OutputPath = context.ParseResult.GetValueForOption(outputPathOption),
+                MinimumSeverity = context.ParseResult.GetValueForOption(severityOption)
+            };
+            await RunAnalysisWithDI(options);
+        });
+
+        return await rootCommand.InvokeAsync(args);
+    }
+
+    static async Task RunAnalysisWithDI(AnalysisOptions options)
+    {
+        var services = new ServiceCollection();
+
+        services.AddLogging(configure => configure.AddConsole());
+
+
+        // Register Infrastructure Services
+        services.AddSingleton<IProjectLoader, RoslynProjectLoader>();
+        
+        if (options.OutputFormat.Equals("console", StringComparison.OrdinalIgnoreCase))
+        {
+            services.AddSingleton<IReporter, ConsoleReporter>();
+        }
+        else
+        {
+            // TODO: Add registration for other reporters (e.g., JsonReporter)
+            services.AddSingleton<IReporter>(sp =>
+            {
+                Console.Error.WriteLine($"Output format '{options.OutputFormat}' not yet implemented. Using console.");
+                return ActivatorUtilities.CreateInstance<ConsoleReporter>(sp); // Fallback
+            });
+        }
+
+        services.AddTransient<AnalysisOrchestrator>();
+
+        // Register Analyzers (Rule Discovery)
+        services.AddTransient<IAnalyzer, JsInvokableMethodAnalyzer>();
+
+        // Build Service Provider
+        var serviceProvider = services.BuildServiceProvider();
+
+        // --- Run Analysis ---
+        var orchestrator = serviceProvider.GetRequiredService<AnalysisOrchestrator>();
+        var cancellationTokenSource = new CancellationTokenSource();
+        // Handle Ctrl+C for cancellation
+        Console.CancelKeyPress += (sender, e) => {
+            e.Cancel = true;
+            Console.WriteLine("Cancellation requested...");
+            cancellationTokenSource.Cancel();
+        };
+
+        await orchestrator.RunAnalysisAsync(options, cancellationTokenSource.Token);
+    }
+}

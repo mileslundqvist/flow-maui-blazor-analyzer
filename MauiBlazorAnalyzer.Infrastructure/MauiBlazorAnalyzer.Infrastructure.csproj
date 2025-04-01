@@ -1,6 +1,12 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <ItemGroup>
+    <Compile Remove="SourceProcessors\**" />
+    <EmbeddedResource Remove="SourceProcessors\**" />
+    <None Remove="SourceProcessors\**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Razor.Language" Version="6.0.36" />
     <PackageReference Include="Microsoft.Build.Locator" Version="1.7.8" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="4.13.0" />
@@ -9,10 +15,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\MauiBlazorAnalyzer.Core\MauiBlazorAnalyzer.Core.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Folder Include="SourceProcessors\" />
   </ItemGroup>
 
   <PropertyGroup>
