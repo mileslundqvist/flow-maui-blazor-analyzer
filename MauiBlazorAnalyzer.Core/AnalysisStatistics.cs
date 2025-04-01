@@ -11,9 +11,9 @@ namespace MauiBlazorAnalyzer.Core;
 /// </summary>
 public class AnalysisStatistics
 {
-    public int TotalFiles { get; set; }
-    public int RazorFiles { get; set; }
-    public int CSharpFiles { get; set; }
+    public int TotalFilesAnalyzed { get; set; }
+    public int CSharpFilesAnalyzed { get; set; }
+    public int RazorFilesAnalyzed { get; set; }
     public int LinesOfCode { get; set; }
     public TimeSpan AnalysisDuration { get; set; }
 }

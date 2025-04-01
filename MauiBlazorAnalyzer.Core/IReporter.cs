@@ -8,5 +8,5 @@ public interface IReporter
     /// <summary>
     /// Reports analysis results
     /// </summary>
-    Task ReportAsync(AnalysisResult result, CancellationToken cancellationToken = default);
+    Task ReportAsync(AnalysisResult result, AnalysisOptions options, CancellationToken cancellationToken = default);
 }
