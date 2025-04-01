@@ -94,6 +94,7 @@ class Program
 
         // Register Analyzers (Rule Discovery)
         services.AddTransient<IAnalyzer, JsInvokableMethodAnalyzer>();
+        services.AddTransient<IAnalyzer, JsInvokableIntraproceduralSinkAnalyzer>();
 
         // Build Service Provider
         var serviceProvider = services.BuildServiceProvider();

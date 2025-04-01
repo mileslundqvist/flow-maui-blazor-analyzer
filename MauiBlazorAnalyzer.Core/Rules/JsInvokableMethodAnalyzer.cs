@@ -91,7 +91,6 @@ public class JsInvokableMethodAnalyzer : IAnalyzer
                     var location = node.GetLocation();
                     var diagnostic = Diagnostic.Create(_descriptor, location, methodName);
 
-                    // Convert to your custom diagnostic format
                     _diagnostics.Add(AnalysisDiagnostic.FromRoslynDiagnostic(diagnostic));
                 }
             }
