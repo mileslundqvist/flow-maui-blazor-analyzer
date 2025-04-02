@@ -78,11 +78,11 @@ public class JsInvokableIntraproceduralSinkAnalyzer : IAnalyzer
             // Use a dedicated walker for finding and analyzing JSInvokable methods
             var walker = new JsInvokableTaintWalker(semanticModel, diagnostics, Rule, cancellationToken);
             walker.Visit(root);
+       
         }
         return Task.FromResult(diagnostics.ToImmutable());
     }
 
-    // --- Inner Syntax Walker ---
     // --- Syntax Walker ---
     private class JsInvokableTaintWalker : CSharpSyntaxWalker
     {
