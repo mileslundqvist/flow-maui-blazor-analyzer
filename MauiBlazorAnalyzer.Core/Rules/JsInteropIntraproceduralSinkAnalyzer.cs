@@ -110,6 +110,8 @@ public class JsInvokableIntraproceduralSinkAnalyzer : IAnalyzer
         {
             _cancellationToken.ThrowIfCancellationRequested();
 
+
+
             var methodSymbol = _semanticModel.GetDeclaredSymbol(methodDeclaration, _cancellationToken);
 
             // Proceed only if it's a JSInvokable method with parameters and a body
