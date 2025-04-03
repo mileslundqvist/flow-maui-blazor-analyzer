@@ -7,7 +7,7 @@ namespace MauiBlazorAnalyzer.Core.TaintEngine;
 public class TaintEngine
 {
     private readonly Compilation _compilation;
-    private readonly TaintPropagationVisitor _visitor = new();
+    private readonly TaintPropagationVisitor _operationVisitor = new(); // Renamed for clarity
 
     public TaintEngine(Compilation compilation)
     {
@@ -19,149 +19,185 @@ public class TaintEngine
         foreach (var syntaxTree in _compilation.SyntaxTrees)
         {
             var semanticModel = _compilation.GetSemanticModel(syntaxTree);
+            if (semanticModel == null) continue;
+
             var root = await syntaxTree.GetRootAsync(cancellationToken);
             var methodDeclarations = root.DescendantNodes().OfType<MethodDeclarationSyntax>();
 
-
-            // Loop through all declared methods
             foreach (var methodDecl in methodDeclarations)
             {
-                var methodSymbol = semanticModel.GetDeclaredSymbol(methodDecl);
-                if (methodSymbol != null && methodSymbol is IMethodSymbol)
+                // Use SymbolFinder or GetDeclaredSymbol safely
+                if (semanticModel.GetDeclaredSymbol(methodDecl, cancellationToken) is IMethodSymbol methodSymbol)
                 {
-                    await AnalyzeMethodAsync((IMethodSymbol)methodSymbol, semanticModel, cancellationToken);
+                    // Filter for specific method during debugging, remove for full analysis
+                    //if (methodSymbol.Name != "DangerousFunction") continue;
+
+                    await AnalyzeMethodInternalAsync(methodSymbol, cancellationToken);
                 }
             }
         }
     }
 
-    private async Task AnalyzeMethodAsync(IMethodSymbol methodSymbol, SemanticModel initialModel, CancellationToken cancellationToken)
+    private async Task AnalyzeMethodInternalAsync(IMethodSymbol methodSymbol, CancellationToken cancellationToken)
     {
-        
-        if (methodSymbol.Name != "DangerousFunction") return;
 
-        Console.WriteLine($"Analyzing method: {methodSymbol}");
-        // Find the operation corresponding to the method body
-        IOperation? operationBody = null;
+        ControlFlowGraph? cfg = await TryGetControlFlowGraphAsync(methodSymbol, cancellationToken);
+
+        if (cfg == null)
+        {
+            Console.WriteLine($"Warning: Could not create CFG for method {methodSymbol}. Skipping analysis.");
+            return;
+        }
+
+        var initialEntryState = CreateInitialAnalysisState(methodSymbol);
+        var finalStates = RunFixedPointAnalysis(cfg, initialEntryState);
+
+        PrintAnalysisResults(methodSymbol, finalStates);
+    }
+
+    private async Task<ControlFlowGraph?> TryGetControlFlowGraphAsync(IMethodSymbol methodSymbol, CancellationToken cancellationToken)
+    {
+        // Getting the CFG can be tricky. It often requires the syntax node AND a semantic model.
+        // The most reliable way is often via an IOperation representing the body, but getting that isn't always direct.
+        // Using the syntax node is sometimes a fallback.
         foreach (var syntaxRef in methodSymbol.DeclaringSyntaxReferences)
         {
             var syntaxNode = await syntaxRef.GetSyntaxAsync(cancellationToken);
             var semanticModel = _compilation.GetSemanticModel(syntaxNode.SyntaxTree);
-            operationBody = semanticModel.GetOperation(syntaxNode, cancellationToken);
-            if (operationBody != null) break;
-        }
 
-
-        if (operationBody == null)
-        {
-            Console.WriteLine($"Warning: Could not get IOperation for method {methodSymbol}. Skipping.");
-            return;
-        }
-
-        // --- Get Control Flow Graph ---
-        ControlFlowGraph? cfg = null;
-        try
-        {
-            var syntaxForCfg = methodSymbol.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax(cancellationToken);
-            if (syntaxForCfg != null)
+            if (semanticModel != null)
             {
-                cfg = ControlFlowGraph.Create(syntaxForCfg, initialModel);
+                try
+                {
+                    // Try creating CFG directly from syntax node
+                    var cfg = ControlFlowGraph.Create(syntaxNode, semanticModel);
+                    if (cfg != null)
+                    {
+                        return cfg;
+                    }
+
+                    // Fallback/Alternative: Try getting IOperation body first
+                    // IOperation? operationBody = semanticModel.GetOperation(syntaxNode, cancellationToken);
+                    // if (operationBody is IBlockOperation blockOperation) // Or other relevant operation types
+                    // {
+                    //     cfg = ControlFlowGraph.Create(blockOperation);
+                    //     if (cfg != null) return cfg;
+                    // }
+                }
+                catch (Exception ex)
+                {
+                    // Log or handle specific exceptions if needed
+                    Console.WriteLine($"Error creating CFG for syntax node in {methodSymbol}: {ex.Message}");
+                }
             }
-
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error creating CFG for {methodSymbol}: {ex.Message}");
         }
 
+        Console.WriteLine($"Warning: Failed to create CFG for any syntax reference of method {methodSymbol}.");
+        return null;
+    }
 
-        if (cfg == null)
-        {
-            Console.WriteLine($"Warning: Could not create CFG for method {methodSymbol}. Skipping intra-procedural analysis.");
-            return;
-        }
-
-        // --- Fixed-Point Iteration Setup ---
-        var blockInputStates = new Dictionary<BasicBlock, AnalysisState>();
-
-        // Worklist of blocks to process
-        var worklist = new Queue<BasicBlock>();
-
+    private AnalysisState CreateInitialAnalysisState(IMethodSymbol methodSymbol)
+    {
         var entryState = AnalysisState.Empty;
         foreach (var param in methodSymbol.Parameters)
         {
-            // TODO: Handle real parameter types
-            if (param.Type.Name.Contains("HttpRequest"))
-            {
-                entryState = entryState.SetTaint(param, TaintState.Tainted);
-            }
+            // TODO: Initialize entry state based on method parameters
+        }
+        return entryState;
+    }
+
+    private Dictionary<BasicBlock, AnalysisState> RunFixedPointAnalysis(ControlFlowGraph cfg, AnalysisState initialEntryState)
+    {
+        var blockInputStates = new Dictionary<BasicBlock, AnalysisState>();
+        var worklist = new Queue<BasicBlock>();
+
+        if (cfg.Blocks.Length > 0)
+        {
+            var entryBlock = cfg.Blocks[0]; // Assuming block 0 is always the entry block
+            blockInputStates[entryBlock] = initialEntryState;
+            worklist.Enqueue(entryBlock);
         }
 
-        var entryBlock = cfg.Blocks[0];
-
-        blockInputStates[entryBlock] = entryState;
-        worklist.Enqueue(entryBlock);
-
-        // --- Run Analysis Loop ---
         while (worklist.Count > 0)
         {
             var currentBlock = worklist.Dequeue();
-            var currentState = blockInputStates[currentBlock];
+            var blockInputState = blockInputStates[currentBlock];
 
-            // Process operations in the block
-            foreach (var op in currentBlock.Operations)
+            var blockOutputState = ProcessBlock(currentBlock, blockInputState);
+
+            PropagateStateToSuccessors(currentBlock, blockOutputState, blockInputStates, worklist);
+        }
+
+        return blockInputStates;
+    }
+
+    private AnalysisState ProcessBlock(BasicBlock block, AnalysisState inputState)
+    {
+        var currentState = inputState;
+        foreach (var op in block.Operations)
+        {
+            currentState = op.Accept(_operationVisitor, currentState);
+            // The visitor handles state changes based on operations
+        }
+
+        // Process conditional branch value *after* main operations
+        if (block.BranchValue != null)
+        {
+            currentState = block.BranchValue.Accept(_operationVisitor, currentState);
+        }
+        return currentState;
+    }
+
+    private void PropagateStateToSuccessors(
+        BasicBlock currentBlock,
+        AnalysisState outputState,
+        Dictionary<BasicBlock, AnalysisState> blockInputStates,
+        Queue<BasicBlock> worklist)
+    {
+        ProcessBranch(currentBlock.FallThroughSuccessor);
+        ProcessBranch(currentBlock.ConditionalSuccessor);
+
+        void ProcessBranch(ControlFlowBranch? branch)
+        {
+            if (branch?.Destination != null)
             {
-                currentState = op.Accept(_visitor, currentState);
-                // TODO: Handle results of operations that affect subsequent operations (e.g., return values)
-            }
+                var successor = branch.Destination;
 
-            // Process conditional branch value if it exists
-            if (currentBlock.BranchValue != null)
-            {
-                currentState = currentBlock.BranchValue.Accept(_visitor, currentState);
-            }
-
-            var outputState = currentState;
-
-            // Propagate state to successors
-            void Propagate(ControlFlowBranch? branch)
-            {
-                if (branch?.Destination != null)
+                // Try to get the existing state; track if it existed.
+                bool successorHasExistingState = blockInputStates.TryGetValue(successor, out var existingSuccessorState);
+                if (!successorHasExistingState)
                 {
-                    var successor = branch.Destination;
-                    var existingSuccessorState = blockInputStates.GetValueOrDefault(successor, AnalysisState.Empty);
-                    var mergedState = existingSuccessorState.Merge(outputState);
+                    // If no state existed, the 'previous' state is conceptually Empty.
+                    existingSuccessorState = AnalysisState.Empty;
+                }
 
-  
+                // Merge the output state from the current block into the successor's state.
+                var mergedState = existingSuccessorState.Merge(outputState);
+
+                if (mergedState != existingSuccessorState || !successorHasExistingState)
+                {
                     blockInputStates[successor] = mergedState;
+
                     if (!worklist.Contains(successor))
                     {
                         worklist.Enqueue(successor);
                     }
-                    
                 }
             }
-
-            Propagate(currentBlock.FallThroughSuccessor);
-            Propagate(currentBlock.ConditionalSuccessor);
         }
+    }
 
-        Console.WriteLine($"Finished analyzing method: {methodSymbol}");
-        // TODO: Store/report results from blockInputStates
-
-        foreach (var kvp in blockInputStates)
+    private void PrintAnalysisResults(IMethodSymbol methodSymbol, Dictionary<BasicBlock, AnalysisState> finalStates)
+    {
+        foreach (var kvp in finalStates.OrderBy(kv => kv.Key.Ordinal))
         {
-            if (kvp.Value.TaintMap.Count > 0)
+            if (!kvp.Value.TaintMap.IsEmpty)
             {
-                Console.WriteLine($"Block: {kvp.Key}");
-                foreach (var state in kvp.Value.TaintMap)
+                Console.WriteLine($"Taints in {methodSymbol.Name}:");
+                foreach (var stateEntry in kvp.Value.TaintMap)
                 {
-                    Console.WriteLine($"  {state.Key}: {state.Value}");
+                    Console.WriteLine($"   Element: {stateEntry.Key} -> Taint: {stateEntry.Value}");
                 }
-            }
-            else
-            {
-                Console.WriteLine($"Block: {kvp.Key} - No taint detected.");
             }
         }
     }
