@@ -54,14 +54,14 @@ public class TaintPropagationVisitor : OperationVisitor<AnalysisState, AnalysisS
 
         for (int i = 0; i < operation.Arguments.Length; i++)
         {
-            if (TaintPolicy.IsSink(operation, i, state))
+            if (TaintPolicy.IsSink(operation.TargetMethod.ToDisplayString()))
             {
                 // Add to vulnerability report list
                 return state.SetTaint(operation.TargetMethod, TaintState.Tainted);
             }
         }
 
-        if (TaintPolicy.IsSource(operation.TargetMethod))
+        if (TaintPolicy.IsSource(operation.TargetMethod.ToDisplayString()))
         {
             // Need to identify where the return value goes (assignment target, etc.)
             // This usually happens *after* the invocation operation in the CFG.
@@ -72,7 +72,7 @@ public class TaintPropagationVisitor : OperationVisitor<AnalysisState, AnalysisS
         }
 
         // 3. Check if invocation is a Sanitizer
-        else if (TaintPolicy.IsSanitizer(operation))
+        else if (TaintPolicy.IsSanitizer(operation.TargetMethod.ToDisplayString()))
         {
             // Similar to source, need to identify where return value goes and mark it NOT tainted.
             // Placeholder: Mark return value as untainted.
@@ -97,11 +97,11 @@ public class TaintPropagationVisitor : OperationVisitor<AnalysisState, AnalysisS
 
         if (operation is IInvocationOperation localInvocation)
         {
-            if (TaintPolicy.IsSource(localInvocation.TargetMethod))
+            if (TaintPolicy.IsSource(localInvocation.TargetMethod.ToDisplayString()))
             {
                 return TaintState.Tainted;
             }
-            else if (TaintPolicy.IsSanitizer(localInvocation))
+            else if (TaintPolicy.IsSanitizer(localInvocation.TargetMethod.ToDisplayString()))
             {
                 return TaintState.NotTainted;
             }
