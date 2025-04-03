@@ -13,13 +13,16 @@ public static class TaintPolicy
     public static bool IsSource(IMethodSymbol methodSymbol)
     {
         // TODO: Implement a more comprehensive check for sources
-        return methodSymbol.ToString().Contains("System.Console.Readline");
+        return methodSymbol.ToDisplayString().Contains("Console.ReadLine") ||
+               methodSymbol.ToDisplayString().Contains("HttpContext.Request.Query") ||
+               methodSymbol.ToDisplayString().Contains("HttpContext.Request.Form") ||
+               methodSymbol.ToDisplayString().Contains("HttpContext.Request.Body");
     }
 
     public static bool IsSink(IInvocationOperation invocation, int argumentIndex, AnalysisState currentState)
     {
         // TODO: Implement a more comprehensive check for sinks
-        if (invocation.TargetMethod.ToString().Contains("SqlCommand.CommandText.set") && argumentIndex == 0)
+        if (invocation.TargetMethod.ToString().Contains("Console.WriteLine") && argumentIndex == 0)
         {
             var argument = invocation.Arguments[argumentIndex].Value;
 

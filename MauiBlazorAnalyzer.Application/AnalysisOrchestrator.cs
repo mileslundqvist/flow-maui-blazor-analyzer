@@ -1,4 +1,5 @@
 ﻿using MauiBlazorAnalyzer.Core;
+using MauiBlazorAnalyzer.Core.TaintEngine;
 using Microsoft.CodeAnalysis;
 using Microsoft.Extensions.Logging;
 using System;
@@ -93,6 +94,9 @@ public class AnalysisOrchestrator
                         firstErrorMessage ??= $"Analyzer {analyzer.Id} failed: {ex.Message}";
                     }
                 }
+
+                var engine = new TaintEngine(compilation);
+                await engine.AnalyzeProjectAsync();
             }
 
             // --- Aggregation & Filtering ---

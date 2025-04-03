@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 
 namespace MauiBlazorAnalyzer.Core.TaintEngine;
 
-public class AnalysisState
+public class AnalysisState : IEquatable<AnalysisState>
 {
     public ImmutableDictionary<ISymbol, TaintState> TaintMap { get; }
 
@@ -42,4 +42,34 @@ public class AnalysisState
         }
         return changed ? new AnalysisState(builder.ToImmutable()) : this;
     }
+
+    public bool Equals(AnalysisState? other)
+    {
+        if (other is null) return false;
+        if (ReferenceEquals(this, other)) return true;
+        if (TaintMap.Count != other.TaintMap.Count) return false;
+        foreach (var kvp in TaintMap)
+        {
+            if (!other.TaintMap.TryGetValue(kvp.Key, out var otherValue) || kvp.Value != otherValue)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+    public override bool Equals(object? obj) => Equals(obj as AnalysisState);
+
+    public override int GetHashCode()
+    {
+        int hash = 19;
+        foreach (var kvp in TaintMap.OrderBy(kv => kv.Key.Name)) // Order for consistency
+        {
+            hash = hash * 31 + kvp.Key.GetHashCode();
+            hash = hash * 31 + kvp.Value.GetHashCode();
+        }
+        return hash;
+    }
+
+    public static bool operator ==(AnalysisState? left, AnalysisState? right) => Equals(left, right);
+    public static bool operator !=(AnalysisState? left, AnalysisState? right) => !Equals(left, right);
 }
