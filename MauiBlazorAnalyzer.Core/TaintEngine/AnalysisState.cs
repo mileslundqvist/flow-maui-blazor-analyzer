@@ -19,7 +19,7 @@ public class AnalysisState
     public static AnalysisState Empty { get; } = new(ImmutableDictionary<ISymbol, TaintState>.Empty);
 
     public TaintState GetTaint(ISymbol symbol) =>
-        TaintMap.TryGetValue(symbol, out var state) ? state : TaintState.Unknown;
+        TaintMap.TryGetValue(symbol, out var state) ? state : TaintState.NotTainted;
 
     public AnalysisState SetTaint(ISymbol symbol, TaintState state)
     {

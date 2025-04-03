@@ -15,9 +15,5 @@ public enum TaintState
     /// <summary>
     /// Represents a state where the taint is present.
     /// </summary>
-    Tainted,
-    /// <summary>
-    /// Represents a state where the taint is unknown.
-    /// </summary>
-    Unknown
+    Tainted
 }
