@@ -1,0 +1,45 @@
+﻿using Microsoft.CodeAnalysis;
+using System;
+using System.Collections.Generic;
+using System.Collections.Immutable;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace MauiBlazorAnalyzer.Core.TaintEngine;
+
+public class AnalysisState
+{
+    public ImmutableDictionary<ISymbol, TaintState> TaintMap { get; }
+
+    public AnalysisState(ImmutableDictionary<ISymbol, TaintState> map)
+    {
+        TaintMap = map ?? throw new ArgumentNullException(nameof(map));
+    }
+    public static AnalysisState Empty { get; } = new(ImmutableDictionary<ISymbol, TaintState>.Empty);
+
+    public TaintState GetTaint(ISymbol symbol) =>
+        TaintMap.TryGetValue(symbol, out var state) ? state : TaintState.Unknown;
+
+    public AnalysisState SetTaint(ISymbol symbol, TaintState state)
+    {
+        ArgumentNullException.ThrowIfNull(symbol);
+        if (GetTaint(symbol) == state) return this;
+        return new AnalysisState(TaintMap.SetItem(symbol, state));
+    }
+
+    public AnalysisState Merge(AnalysisState other)
+    {
+        var builder = TaintMap.ToBuilder();
+        bool changed = false;
+        foreach (var kvp in other.TaintMap)
+        {
+            if (kvp.Value == TaintState.Tainted && GetTaint(kvp.Key) == TaintState.NotTainted)
+            {
+                builder[kvp.Key] = TaintState.Tainted;
+                changed = true;
+            }
+        }
+        return changed ? new AnalysisState(builder.ToImmutable()) : this;
+    }
+}
