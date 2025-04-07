@@ -24,10 +24,10 @@ public class TaintEngine
             var root = await syntaxTree.GetRootAsync(cancellationToken);
             var methodDeclarations = root.DescendantNodes().OfType<MethodDeclarationSyntax>();
 
-            foreach (var methodDecl in methodDeclarations)
+            foreach (var methodDeclaration in methodDeclarations)
             {
                 // Use SymbolFinder or GetDeclaredSymbol safely
-                if (semanticModel.GetDeclaredSymbol(methodDecl, cancellationToken) is IMethodSymbol methodSymbol)
+                if (semanticModel.GetDeclaredSymbol(methodDeclaration, cancellationToken) is IMethodSymbol methodSymbol)
                 {
                     // Filter for specific method during debugging, remove for full analysis
                     //if (methodSymbol.Name != "DangerousFunction") continue;
@@ -101,7 +101,7 @@ public class TaintEngine
         var entryState = AnalysisState.Empty;
         foreach (var param in methodSymbol.Parameters)
         {
-            // TODO: Initialize entry state based on method parameters
+            // TODO: Initialize entry state based on method parameters to see if they are tainted
         }
         return entryState;
     }
@@ -134,10 +134,9 @@ public class TaintEngine
     private AnalysisState ProcessBlock(BasicBlock block, AnalysisState inputState)
     {
         var currentState = inputState;
-        foreach (var op in block.Operations)
+        foreach (var operation in block.Operations)
         {
-            currentState = op.Accept(_operationVisitor, currentState);
-            // The visitor handles state changes based on operations
+            currentState = operation.Accept(_operationVisitor, currentState);
         }
 
         // Process conditional branch value *after* main operations
@@ -145,6 +144,7 @@ public class TaintEngine
         {
             currentState = block.BranchValue.Accept(_operationVisitor, currentState);
         }
+
         return currentState;
     }
 
