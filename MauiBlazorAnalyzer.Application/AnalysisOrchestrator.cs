@@ -95,8 +95,9 @@ public class AnalysisOrchestrator
                     }
                 }
 
-                var engine = new TaintEngine(compilation);
-                await engine.AnalyzeProjectAsync();
+                var engine = new TaintEngine(compilation,_logger);
+                var taintDiagnostics = await engine.AnalyzeProjectAsync();
+                allDiagnostics.AddRange(taintDiagnostics);
             }
 
             // --- Aggregation & Filtering ---

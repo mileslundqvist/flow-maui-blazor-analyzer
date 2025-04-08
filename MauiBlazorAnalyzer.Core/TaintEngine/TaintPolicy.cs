@@ -22,61 +22,7 @@ public static class TaintPolicy
     // Static constructor will be called once before the first access to any static member
     static TaintPolicy()
     {
-        LoadAllSources();
-        LoadAllSinks();
-        LoadAllSanitizers();
-    }
-
-    private static void LoadAllSources()
-    {
-        // Add Web Sources
-        _sources.Add(WebSources.RequestQuery);
-        _sources.Add(WebSources.RequestBody);
-        _sources.Add(WebSources.RequestHeader);
-        _sources.Add(WebSources.HttpRequest);
-
-        _sources.Add(MauiBlazorSources.BlazorComponentParameters);
-        _sources.Add(MauiBlazorSources.JsInteropInput);
-        _sources.Add(MauiBlazorSources.UrlParameters);
-
-
-
-        // You can add other sources from different categories
-        // _sources.Add(FileSystemSources.FileRead);
-        // _sources.Add(ConsoleInput.ReadLine);
-    }
-
-    private static void LoadAllSinks()
-    {
-        // Add SQL Sinks
-        _sinks.Add(SqlSinks.SqlCommand);
-        _sinks.Add(SqlSinks.EntityFramework);
-        _sinks.Add(SqlSinks.Dapper);
-
-        _sinks.Add(MauiBlazorSinks.JsInvoke);
-        _sinks.Add(MauiBlazorSinks.JsInvokeAsync);
-        _sinks.Add(MauiBlazorSinks.JsEval);
-        _sinks.Add(MauiBlazorSinks.WebViewSource);
-        _sinks.Add(MauiBlazorSinks.WebViewNavigate);
-        _sinks.Add(MauiBlazorSinks.HtmlInjection);
-        _sinks.Add(MauiBlazorSinks.LocalStorage);
-        _sinks.Add(MauiBlazorSinks.FileSystemWrite);
-        _sinks.Add(MauiBlazorSinks.PlatformInvoke);
-        _sinks.Add(MauiBlazorSinks.NavigationToUri);
-
-        // Add other categories of sinks
-        // _sinks.Add(XssSinks.HtmlOutput);
-        // _sinks.Add(CommandInjectionSinks.ProcessStart);
-    }
-
-    private static void LoadAllSanitizers()
-    {
-        // Add SQL Sanitizers
-        _sanitizers.Add(SqlSanitizers.ParameterizedQuery);
-        _sanitizers.Add(SqlSanitizers.OrmFramework);
-
-        // Add other categories of sanitizers
-        // _sanitizers.Add(XssSanitizers.HtmlEncode);
+        LoadAllByReflection();
     }
 
     // Alternative approach: load by reflection
@@ -87,22 +33,17 @@ public static class TaintPolicy
             var assembly = Assembly.GetExecutingAssembly();
 
             // Load sources
-            LoadStaticFields<ITaintSource>(assembly, "TaintAnalysis.Sources", _sources);
+            LoadStaticFields<ITaintSource>(assembly, "MauiBlazorAnalyzer.Core.TaintEngine.Sources", _sources);
 
             // Load sinks
-            LoadStaticFields<ITaintSink>(assembly, "TaintAnalysis.Sinks", _sinks);
+            LoadStaticFields<ITaintSink>(assembly, "MauiBlazorAnalyzer.Core.TaintEngine.Sinks", _sinks);
 
             // Load sanitizers
-            LoadStaticFields<ITaintSanitizer>(assembly, "TaintAnalysis.Sanitizers", _sanitizers);
+            LoadStaticFields<ITaintSanitizer>(assembly, "MauiBlazorAnalyzer.Core.TaintEngine.Sanitizers", _sanitizers);
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Error loading taint analysis patterns: {ex.Message}");
-
-            // Fallback to manual loading if reflection fails
-            LoadAllSources();
-            LoadAllSinks();
-            LoadAllSanitizers();
         }
     }
 

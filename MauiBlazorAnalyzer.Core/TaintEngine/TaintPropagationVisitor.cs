@@ -52,40 +52,27 @@ public class TaintPropagationVisitor : OperationVisitor<AnalysisState, AnalysisS
     {
         AnalysisState newState = state;
 
-        for (int i = 0; i < operation.Arguments.Length; i++)
+        if (TaintPolicy.IsSink(operation.TargetMethod.ToDisplayString()))
         {
-            if (TaintPolicy.IsSink(operation.TargetMethod.ToDisplayString()))
+            foreach (var argument in operation.Arguments)
             {
-                // Add to vulnerability report list
-                return state.SetTaint(operation.TargetMethod, TaintState.Tainted);
+                IOperation argumentValueOperation = argument.Value;
+                TaintState valueTaint = GetOperationTaint(argumentValueOperation, newState);
+
+                if (valueTaint == TaintState.Tainted)
+                {
+                    newState = newState.SetTaint(operation.TargetMethod, valueTaint);
+                }
+
             }
+        } else if (TaintPolicy.IsSource(operation.TargetMethod.ToDisplayString()))
+        {
+
+        } else
+        {
+
         }
 
-        if (TaintPolicy.IsSource(operation.TargetMethod.ToDisplayString()))
-        {
-            // Need to identify where the return value goes (assignment target, etc.)
-            // This usually happens *after* the invocation operation in the CFG.
-            // The analysis might need to track return values separately.
-            // For simplification here, let's assume we need a more complex analysis state...
-            // Placeholder: Mark return value as tainted (requires better state representation)
-            Console.WriteLine($"INFO: Taint source encountered: {operation.TargetMethod}");
-        }
-
-        // 3. Check if invocation is a Sanitizer
-        else if (TaintPolicy.IsSanitizer(operation.TargetMethod.ToDisplayString()))
-        {
-            // Similar to source, need to identify where return value goes and mark it NOT tainted.
-            // Placeholder: Mark return value as untainted.
-            Console.WriteLine($"INFO: Sanitizer encountered: {operation.TargetMethod}");
-        }
-        // 4. Handle Inter-procedural Call (Complex!)
-        else
-        {
-            bool anyArgTainted = operation.Arguments.Any(arg => GetOperationTaint(arg.Value, state) == TaintState.Tainted);
-            if (anyArgTainted)
-            {
-            }
-        }
 
         return newState;
     }

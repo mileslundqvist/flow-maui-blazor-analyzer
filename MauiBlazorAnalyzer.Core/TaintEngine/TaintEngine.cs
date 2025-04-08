@@ -1,21 +1,37 @@
 ﻿using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.FlowAnalysis;
+using Microsoft.CodeAnalysis.Operations;
+using Microsoft.Extensions.Logging;
+using System.Collections.Immutable;
 
 namespace MauiBlazorAnalyzer.Core.TaintEngine;
 
 public class TaintEngine
 {
     private readonly Compilation _compilation;
-    private readonly TaintPropagationVisitor _operationVisitor = new(); // Renamed for clarity
+    private readonly ILogger _logger;
+    private readonly TaintPropagationVisitor _operationVisitor = new();
 
-    public TaintEngine(Compilation compilation)
+    public TaintEngine(Compilation compilation, ILogger logger)
     {
         _compilation = compilation ?? throw new ArgumentNullException(nameof(compilation));
+        _logger = logger;
     }
 
-    public async Task AnalyzeProjectAsync(CancellationToken cancellationToken = default)
+    private static readonly DiagnosticDescriptor TaintSinkRule = new DiagnosticDescriptor(
+            id: "MBA003",
+            title: "Tainted Data Reaches Sink",
+            messageFormat: "Tainted data (potentially from {0}) reaches sensitive sink '{1}' via argument '{2}'",
+            category: "Security.Taint",
+            defaultSeverity: DiagnosticSeverity.Warning,
+            isEnabledByDefault: true,
+            description: "Data potentially originating from an untrusted source flows into a sensitive operation without proper sanitization.");
+
+    public async Task<ImmutableArray<AnalysisDiagnostic>> AnalyzeProjectAsync(CancellationToken cancellationToken = default)
     {
+        var allDiagnostics = ImmutableArray.CreateBuilder<AnalysisDiagnostic>();
+
         foreach (var syntaxTree in _compilation.SyntaxTrees)
         {
             var semanticModel = _compilation.GetSemanticModel(syntaxTree);
@@ -26,40 +42,149 @@ public class TaintEngine
 
             foreach (var methodDeclaration in methodDeclarations)
             {
+                
                 // Use SymbolFinder or GetDeclaredSymbol safely
                 if (semanticModel.GetDeclaredSymbol(methodDeclaration, cancellationToken) is IMethodSymbol methodSymbol)
                 {
                     // Filter for specific method during debugging, remove for full analysis
-                    //if (methodSymbol.Name != "DangerousFunction") continue;
+                    if (methodSymbol.Name != "DangerousFunction") continue;
 
-                    await AnalyzeMethodInternalAsync(methodSymbol, cancellationToken);
+                    var methodDiagnostics = await AnalyzeMethodInternalAsync(methodSymbol, cancellationToken);
+                    allDiagnostics.AddRange(methodDiagnostics);
+                   
                 }
             }
         }
+
+        return allDiagnostics.ToImmutable();
     }
 
-    private async Task AnalyzeMethodInternalAsync(IMethodSymbol methodSymbol, CancellationToken cancellationToken)
+    private async Task<List<AnalysisDiagnostic>> AnalyzeMethodInternalAsync(IMethodSymbol methodSymbol, CancellationToken cancellationToken)
     {
-
         ControlFlowGraph? cfg = await TryGetControlFlowGraphAsync(methodSymbol, cancellationToken);
 
         if (cfg == null)
         {
-            Console.WriteLine($"Warning: Could not create CFG for method {methodSymbol}. Skipping analysis.");
-            return;
+            _logger.LogInformation($"Warning: Could not create CFG for method {methodSymbol}. Skipping analysis.");
+            return null;
         }
 
         var initialEntryState = CreateInitialAnalysisState(methodSymbol);
         var finalStates = RunFixedPointAnalysis(cfg, initialEntryState);
 
+        var diagnostics = FindTaintViolations(cfg, finalStates);
+
+        if (diagnostics.Any())
+        {
+            _logger.LogInformation($"Found {diagnostics.Count} potential tain violations in {methodSymbol.Name}");
+        }
+
         PrintAnalysisResults(methodSymbol, finalStates);
+
+        return diagnostics;
+
+
     }
+
+    private List<AnalysisDiagnostic> FindTaintViolations(
+        ControlFlowGraph cfg,
+        Dictionary<BasicBlock, AnalysisState> finalBlockInputStates)
+    {
+        var diagnostics = new List<AnalysisDiagnostic>();
+        //foreach (var kvp in finalStates)
+        //{
+        //    if (!kvp.Value.TaintMap.IsEmpty)
+        //    {
+        //        foreach (var taint in kvp.Value.TaintMap)
+        //        {
+        //            if (taint.Key is IExpressionStatementOperation expressionStatement)
+        //            {
+        //                if (expressionStatement.Operation is IInvocationOperation invocation)
+        //                {
+        //                    var methodSymbol = invocation.TargetMethod;
+
+        //                    if (TaintPolicy.IsSink(methodSymbol.ToDisplayString()))
+        //                    {
+        //                        foreach (var argument in invocation.Arguments)
+        //                        {
+        //                            if (argument.Value is ILocalReferenceOperation localRef)
+        //                            {
+        //                                TaintState tainted = kvp.Value.GetTaint(localRef.Local);
+
+        //                                if (tainted == TaintState.Tainted)
+        //                                {
+        //                                    var location = argument.Value.Syntax.GetLocation();
+        //                                    var diagnostic = Diagnostic.Create(
+        //                                            TaintSinkRule,
+        //                                            location,
+        //                                            "some origin",
+        //                                            invocation.TargetMethod.ToDisplayString(),
+        //                                            argument.Parameter?.Name ?? $"index {invocation.Arguments.IndexOf(argument)}"
+        //                                        );
+        //                                    diagnostics.Add(AnalysisDiagnostic.FromRoslynDiagnostic(diagnostic));
+        //                                }
+        //                            }
+        //                        }
+        //                    }
+        //                }
+
+        //            }
+        //        }
+        //    }
+        //}
+
+        // Problem: Taints propagate to the exit block, which means that if we just check in the current state "finalStates[block]" then we miss the taints which could be in the exit.
+
+        foreach (var block in cfg.Blocks)
+        {
+            var currentState = finalBlockInputStates.GetValueOrDefault(block, AnalysisState.Empty);
+
+
+            // Simulate the operations in order within the block
+            foreach (var operation in block.Operations)
+            {
+                if (operation is IExpressionStatementOperation expressionStatement)
+                {
+                    if (expressionStatement.Operation is IInvocationOperation invocation)
+                    {
+                        var methodSymbol = invocation.TargetMethod;
+
+                        if (TaintPolicy.IsSink(methodSymbol.ToDisplayString()))
+                        {
+                            foreach (var argument in invocation.Arguments)
+                            {
+                                if (argument.Value is ILocalReferenceOperation localRef)
+                                {
+                                    TaintState tainted = currentState.GetTaint(localRef.Local);
+
+                                    if (tainted == TaintState.Tainted)
+                                    {
+                                        var location = argument.Value.Syntax.GetLocation();
+                                        var diagnostic = Diagnostic.Create(
+                                                TaintSinkRule,
+                                                location,
+                                                "some origin",
+                                                invocation.TargetMethod.ToDisplayString(),
+                                                argument.Parameter?.Name ?? $"index {invocation.Arguments.IndexOf(argument)}"
+                                            );
+                                        diagnostics.Add(AnalysisDiagnostic.FromRoslynDiagnostic(diagnostic));
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                }
+                currentState = operation.Accept(_operationVisitor, currentState);
+            }
+        }
+        return diagnostics;
+    }
+
+
 
     private async Task<ControlFlowGraph?> TryGetControlFlowGraphAsync(IMethodSymbol methodSymbol, CancellationToken cancellationToken)
     {
-        // Getting the CFG can be tricky. It often requires the syntax node AND a semantic model.
-        // The most reliable way is often via an IOperation representing the body, but getting that isn't always direct.
-        // Using the syntax node is sometimes a fallback.
         foreach (var syntaxRef in methodSymbol.DeclaringSyntaxReferences)
         {
             var syntaxNode = await syntaxRef.GetSyntaxAsync(cancellationToken);
@@ -75,24 +200,16 @@ public class TaintEngine
                     {
                         return cfg;
                     }
-
-                    // Fallback/Alternative: Try getting IOperation body first
-                    // IOperation? operationBody = semanticModel.GetOperation(syntaxNode, cancellationToken);
-                    // if (operationBody is IBlockOperation blockOperation) // Or other relevant operation types
-                    // {
-                    //     cfg = ControlFlowGraph.Create(blockOperation);
-                    //     if (cfg != null) return cfg;
-                    // }
                 }
                 catch (Exception ex)
                 {
                     // Log or handle specific exceptions if needed
-                    Console.WriteLine($"Error creating CFG for syntax node in {methodSymbol}: {ex.Message}");
+                    _logger.LogInformation($"Error creating CFG for syntax node in {methodSymbol}: {ex.Message}");
                 }
             }
         }
 
-        Console.WriteLine($"Warning: Failed to create CFG for any syntax reference of method {methodSymbol}.");
+        _logger.LogInformation($"Warning: Failed to create CFG for any syntax reference of method {methodSymbol}.");
         return null;
     }
 
@@ -193,10 +310,10 @@ public class TaintEngine
         {
             if (!kvp.Value.TaintMap.IsEmpty)
             {
-                Console.WriteLine($"Taints in {methodSymbol.Name}:");
+                _logger.LogInformation($"Taints in {methodSymbol.Name}:");
                 foreach (var stateEntry in kvp.Value.TaintMap)
                 {
-                    Console.WriteLine($"   Element: {stateEntry.Key} -> Taint: {stateEntry.Value}");
+                    _logger.LogInformation($"   Element: {stateEntry.Key} -> Taint: {stateEntry.Value}");
                 }
             }
         }
