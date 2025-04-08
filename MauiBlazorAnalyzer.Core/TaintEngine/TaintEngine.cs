@@ -47,7 +47,7 @@ public class TaintEngine
                 if (semanticModel.GetDeclaredSymbol(methodDeclaration, cancellationToken) is IMethodSymbol methodSymbol)
                 {
                     // Filter for specific method during debugging, remove for full analysis
-                    if (methodSymbol.Name != "DangerousFunction") continue;
+                    //if (methodSymbol.Name != "DangerousFunction") continue;
 
                     var methodDiagnostics = await AnalyzeMethodInternalAsync(methodSymbol, cancellationToken);
                     allDiagnostics.AddRange(methodDiagnostics);
@@ -79,7 +79,6 @@ public class TaintEngine
             _logger.LogInformation($"Found {diagnostics.Count} potential tain violations in {methodSymbol.Name}");
         }
 
-        PrintAnalysisResults(methodSymbol, finalStates);
 
         return diagnostics;
 
@@ -165,7 +164,7 @@ public class TaintEngine
                                                 location,
                                                 "some origin",
                                                 invocation.TargetMethod.ToDisplayString(),
-                                                argument.Parameter?.Name ?? $"index {invocation.Arguments.IndexOf(argument)}"
+                                                localRef.Local.ToDisplayString() ?? $"index {invocation.Arguments.IndexOf(argument)}"
                                             );
                                         diagnostics.Add(AnalysisDiagnostic.FromRoslynDiagnostic(diagnostic));
                                     }
@@ -219,8 +218,23 @@ public class TaintEngine
         foreach (var param in methodSymbol.Parameters)
         {
             // TODO: Initialize entry state based on method parameters to see if they are tainted
+            if (IsJSInvokableMethodWithParameters(methodSymbol))
+            {
+                entryState = entryState.SetTaint(param, TaintState.Tainted);
+            }
+            else
+            {
+                entryState = entryState.SetTaint(param, TaintState.NotTainted);
+            }
         }
         return entryState;
+    }
+
+    private bool IsJSInvokableMethodWithParameters(IMethodSymbol? methodSymbol)
+    {
+        return methodSymbol != null &&
+            methodSymbol.Parameters.Any() &&
+            methodSymbol.GetAttributes().Any(attr => attr.AttributeClass?.ToDisplayString() == "Microsoft.JSInterop.JSInvokableAttribute");
     }
 
     private Dictionary<BasicBlock, AnalysisState> RunFixedPointAnalysis(ControlFlowGraph cfg, AnalysisState initialEntryState)

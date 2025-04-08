@@ -99,6 +99,11 @@ public class TaintPropagationVisitor : OperationVisitor<AnalysisState, AnalysisS
             return state.GetTaint(localRef.Local);
         }
 
+        if (operation is IParameterReferenceOperation parameterRef)
+        {
+            return state.GetTaint(parameterRef.Parameter);
+        }
+
         return TaintState.NotTainted;
     }
 }
