@@ -91,16 +91,15 @@ public class AnalysisOrchestrator
                         firstErrorMessage ??= $"Analyzer {analyzer.Id} failed: {ex.Message}";
                     }
                 }
-                
+
+                _logger.LogInformation("Running Call Graph Generator on project '{ProjectName}'...", project.Name);
+                var callGraphGenerator = new CallGraphGenerator(project, compilation);
+                CallGraph callGraph = await callGraphGenerator.CreateCallGraphAsync();
+
                 _logger.LogInformation("Running Taint Engine on project '{ProjectName}'...", project.Name);
                 var engine = new TaintEngine(compilation,_logger);
                 var taintDiagnostics = await engine.AnalyzeProjectAsync();
                 allDiagnostics.AddRange(taintDiagnostics);
-
-                _logger.LogInformation("Running Call Graph Generator on project '{ProjectName}'...", project.Name);
-                var callGraphGenerator = new CallGraphGenerator(project, compilation);
-                await callGraphGenerator.CreateCallGraph();
-                callGraphGenerator.PrintCallGraph(callGraphGenerator.GetCallGraph());
             }
 
             // --- Aggregation & Filtering ---

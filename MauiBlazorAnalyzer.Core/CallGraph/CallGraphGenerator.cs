@@ -14,17 +14,19 @@ public class CallGraphGenerator
 {
     private readonly Compilation _compilation;
     private readonly Project _project;
-    private Dictionary<IMethodSymbol, List<IMethodSymbol>> callGraph;
+    private readonly Solution _solution;
 
     public CallGraphGenerator(Project project, Compilation compilation)
     {
         _compilation = compilation;
         _project = project;
-        callGraph = new Dictionary<IMethodSymbol, List<IMethodSymbol>>(SymbolEqualityComparer.Default);
+        _solution = project.Solution;
     }
 
-    public async Task CreateCallGraph()
+    public async Task<CallGraph> CreateCallGraphAsync()
     {
+        CallGraph callGraph = new();
+
         var allMethods = _compilation.SyntaxTrees.Select(tree => _compilation.GetSemanticModel(tree))
             .SelectMany(model =>
             {
@@ -34,7 +36,6 @@ public class CallGraphGenerator
 
                 return methodDeclarations.Select(methodDeclaration => model.GetDeclaredSymbol(methodDeclaration)).OfType<IMethodSymbol>().Where(symbol => symbol != null);
             }).ToList();
-        //var searchScope = ImmutableHashSet.Create<Document>(_project.Documents.ToArray());
 
         // Iterate through all methods and find their callers
         foreach (var methodSymbol in allMethods)
@@ -47,46 +48,20 @@ public class CallGraphGenerator
             {
                 solution = solution.RemoveProject(projectToRemove.Id);
             }
-
             
-            var references = await SymbolFinder.FindCallersAsync(methodSymbol, solution, /*searchScope,*/ default);
+            var references = await SymbolFinder.FindCallersAsync(methodSymbol, solution, default);
 
             // Iterate through all the callers of the method
             foreach (var caller in references)
             {
-                var callerSymbol = caller.CallingSymbol as IMethodSymbol;
-                if (callerSymbol == null)
-                    continue;
-
-                if (!callGraph.ContainsKey(callerSymbol))
+                if (caller.CallingSymbol != null && caller.CallingSymbol is IMethodSymbol callerSymbol)
                 {
-                    callGraph[callerSymbol] = new List<IMethodSymbol>();
-
+                    callGraph.AddEdge(callerSymbol, methodSymbol);
                 }
 
-                callGraph[callerSymbol].Add(methodSymbol);
-
             }
         }
-    }
 
-    public Dictionary<IMethodSymbol, List<IMethodSymbol>> GetCallGraph()
-    {
         return callGraph;
-        
-    }
-
-    public void PrintCallGraph(Dictionary<IMethodSymbol, List<IMethodSymbol>> callGraph)
-    {
-        foreach (var kvp in callGraph)
-        {
-            var caller = kvp.Key;
-            var callees = kvp.Value;
-            Console.WriteLine($"{caller.Name} calls:");
-            foreach (var callee in callees)
-            {
-                Console.WriteLine($"  - {callee.Name}");
-            }
-        }
     }
 }
