@@ -165,7 +165,7 @@ public class TaintEngine
                                                 location,
                                                 "some origin",
                                                 invocation.TargetMethod.ToDisplayString(),
-                                                argument.Parameter?.Name ?? $"index {invocation.Arguments.IndexOf(argument)}"
+                                                localRef.Local.ToDisplayString() ?? $"index {invocation.Arguments.IndexOf(argument)}"
                                             );
                                         diagnostics.Add(AnalysisDiagnostic.FromRoslynDiagnostic(diagnostic));
                                     }
