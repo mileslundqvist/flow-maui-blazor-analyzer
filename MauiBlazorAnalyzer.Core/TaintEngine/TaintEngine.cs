@@ -66,7 +66,7 @@ public class TaintEngine
         if (cfg == null)
         {
             _logger.LogInformation($"Warning: Could not create CFG for method {methodSymbol}. Skipping analysis.");
-            return null;
+            return new List<AnalysisDiagnostic>();
         }
 
         var initialEntryState = CreateInitialAnalysisState(methodSymbol);
