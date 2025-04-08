@@ -1,14 +1,11 @@
 ﻿using MauiBlazorAnalyzer.Core;
+using MauiBlazorAnalyzer.Core.CallGraph;
 using MauiBlazorAnalyzer.Core.TaintEngine;
 using Microsoft.CodeAnalysis;
 using Microsoft.Extensions.Logging;
-using System;
-using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Diagnostics;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+
 
 namespace MauiBlazorAnalyzer.Application;
 
@@ -95,6 +92,11 @@ public class AnalysisOrchestrator
                     }
                 }
 
+                _logger.LogInformation("Running Call Graph Generator on project '{ProjectName}'...", project.Name);
+                var callGraphGenerator = new CallGraphGenerator(project, compilation);
+                CallGraph callGraph = await callGraphGenerator.CreateCallGraphAsync();
+
+                _logger.LogInformation("Running Taint Engine on project '{ProjectName}'...", project.Name);
                 var engine = new TaintEngine(compilation,_logger);
                 var taintDiagnostics = await engine.AnalyzeProjectAsync();
                 allDiagnostics.AddRange(taintDiagnostics);
