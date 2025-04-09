@@ -41,7 +41,7 @@ public class CallGraphGenerator
         foreach (var methodSymbol in allMethods)
         {
             // Feels like a bit hacky but it works currently, might be a problem for larger solutions
-            var solution = _project.Solution;
+            var solution = _solution;
             var projectsToRemove = solution.Projects.Where(p => p.AssemblyName == _project.AssemblyName && !p.Name.Contains("android"));
             
             foreach (var projectToRemove in projectsToRemove)

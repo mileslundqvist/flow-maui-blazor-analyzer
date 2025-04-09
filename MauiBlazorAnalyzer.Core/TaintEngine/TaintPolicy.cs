@@ -1,5 +1,4 @@
 ﻿using MauiBlazorAnalyzer.Core.TaintEngine.Interfaces;
-using MauiBlazorAnalyzer.Core.TaintEngine.Sanitizers;
 using MauiBlazorAnalyzer.Core.TaintEngine.Sinks;
 using MauiBlazorAnalyzer.Core.TaintEngine.Sources;
 using Microsoft.CodeAnalysis;
@@ -39,7 +38,7 @@ public static class TaintPolicy
             LoadStaticFields<ITaintSink>(assembly, "MauiBlazorAnalyzer.Core.TaintEngine.Sinks", _sinks);
 
             // Load sanitizers
-            LoadStaticFields<ITaintSanitizer>(assembly, "MauiBlazorAnalyzer.Core.TaintEngine.Sanitizers", _sanitizers);
+            //LoadStaticFields<ITaintSanitizer>(assembly, "MauiBlazorAnalyzer.Core.TaintEngine.Sanitizers", _sanitizers);
         }
         catch (Exception ex)
         {
@@ -77,18 +76,4 @@ public static class TaintPolicy
     public static bool IsSanitizer(string methodSignature) =>
         _sanitizers.Any(s => s.Matches(methodSignature));
 
-    // Additional useful methods
-    public static ITaintSource? GetMatchingSource(string methodSignature) =>
-        _sources.FirstOrDefault(s => s.Matches(methodSignature));
-
-    public static ITaintSink? GetMatchingSink(string methodSignature) =>
-        _sinks.FirstOrDefault(s => s.Matches(methodSignature));
-
-    public static ITaintSanitizer? GetMatchingSanitizer(string methodSignature) =>
-        _sanitizers.FirstOrDefault(s => s.Matches(methodSignature));
-
-    // For diagnostics or testing
-    public static IReadOnlyList<ITaintSource> AllSources => _sources.AsReadOnly();
-    public static IReadOnlyList<ITaintSink> AllSinks => _sinks.AsReadOnly();
-    public static IReadOnlyList<ITaintSanitizer> AllSanitizers => _sanitizers.AsReadOnly();
 }

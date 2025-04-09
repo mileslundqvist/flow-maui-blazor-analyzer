@@ -11,12 +11,17 @@ public class TaintEngine
 {
     private readonly Compilation _compilation;
     private readonly ILogger _logger;
-    private readonly TaintPropagationVisitor _operationVisitor = new();
+    private readonly CallGraph.CallGraph _callGraph;
+    private readonly TaintPropagationVisitor _operationVisitor;
+    private readonly SummaryManager _summaryManager;
 
-    public TaintEngine(Compilation compilation, ILogger logger)
+    public TaintEngine(Compilation compilation, ILogger logger, CallGraph.CallGraph callGraph)
     {
         _compilation = compilation ?? throw new ArgumentNullException(nameof(compilation));
         _logger = logger;
+        _callGraph = callGraph;
+        _summaryManager = new();
+        _operationVisitor = new TaintPropagationVisitor(_callGraph, _summaryManager, this);
     }
 
     private static readonly DiagnosticDescriptor TaintSinkRule = new DiagnosticDescriptor(
@@ -47,7 +52,7 @@ public class TaintEngine
                 if (semanticModel.GetDeclaredSymbol(methodDeclaration, cancellationToken) is IMethodSymbol methodSymbol)
                 {
                     // Filter for specific method during debugging, remove for full analysis
-                    //if (methodSymbol.Name != "DangerousFunction") continue;
+                    if (methodSymbol.Name != "DangerousFunction") continue;
 
                     var methodDiagnostics = await AnalyzeMethodInternalAsync(methodSymbol, cancellationToken);
                     allDiagnostics.AddRange(methodDiagnostics);
@@ -79,9 +84,7 @@ public class TaintEngine
             _logger.LogInformation($"Found {diagnostics.Count} potential tain violations in {methodSymbol.Name}");
         }
 
-
         return diagnostics;
-
 
     }
 
@@ -90,49 +93,6 @@ public class TaintEngine
         Dictionary<BasicBlock, AnalysisState> finalBlockInputStates)
     {
         var diagnostics = new List<AnalysisDiagnostic>();
-        //foreach (var kvp in finalStates)
-        //{
-        //    if (!kvp.Value.TaintMap.IsEmpty)
-        //    {
-        //        foreach (var taint in kvp.Value.TaintMap)
-        //        {
-        //            if (taint.Key is IExpressionStatementOperation expressionStatement)
-        //            {
-        //                if (expressionStatement.Operation is IInvocationOperation invocation)
-        //                {
-        //                    var methodSymbol = invocation.TargetMethod;
-
-        //                    if (TaintPolicy.IsSink(methodSymbol.ToDisplayString()))
-        //                    {
-        //                        foreach (var argument in invocation.Arguments)
-        //                        {
-        //                            if (argument.Value is ILocalReferenceOperation localRef)
-        //                            {
-        //                                TaintState tainted = kvp.Value.GetTaint(localRef.Local);
-
-        //                                if (tainted == TaintState.Tainted)
-        //                                {
-        //                                    var location = argument.Value.Syntax.GetLocation();
-        //                                    var diagnostic = Diagnostic.Create(
-        //                                            TaintSinkRule,
-        //                                            location,
-        //                                            "some origin",
-        //                                            invocation.TargetMethod.ToDisplayString(),
-        //                                            argument.Parameter?.Name ?? $"index {invocation.Arguments.IndexOf(argument)}"
-        //                                        );
-        //                                    diagnostics.Add(AnalysisDiagnostic.FromRoslynDiagnostic(diagnostic));
-        //                                }
-        //                            }
-        //                        }
-        //                    }
-        //                }
-
-        //            }
-        //        }
-        //    }
-        //}
-
-        // Problem: Taints propagate to the exit block, which means that if we just check in the current state "finalStates[block]" then we miss the taints which could be in the exit.
 
         foreach (var block in cfg.Blocks)
         {
@@ -217,7 +177,6 @@ public class TaintEngine
         var entryState = AnalysisState.Empty;
         foreach (var param in methodSymbol.Parameters)
         {
-            // TODO: Initialize entry state based on method parameters to see if they are tainted
             if (IsJSInvokableMethodWithParameters(methodSymbol))
             {
                 entryState = entryState.SetTaint(param, TaintState.Tainted);
@@ -228,6 +187,83 @@ public class TaintEngine
             }
         }
         return entryState;
+    }
+
+    public TaintSummary ComputeSummary(IMethodSymbol methodToSummarize, TaintInputPattern inputPattern)
+    {
+        // 1. Get CFG for the method
+        ControlFlowGraph? cfg = Task.Run(() => TryGetControlFlowGraphAsync(methodToSummarize, CancellationToken.None)).Result;
+        if (cfg == null)
+        {
+            _logger.LogWarning($"Cannot compute summary for {methodToSummarize.Name}: Failed to get CFG.");
+            return TaintSummary.ConservativeAssumeTainted;
+        }
+
+        // 2. Create Initial State from Input Pattern
+        AnalysisState initialSummaryState = CreateStateFromInputPattern(methodToSummarize, inputPattern);
+
+        // 3. Run Fixed-Point Analysis for this method
+        var finalStates = RunFixedPointAnalysis(cfg, initialSummaryState);
+
+        // 4. Extract Output Pattern from Final States
+        TaintSummary summary = ExtractOutputPattern(cfg, finalStates, methodToSummarize);
+
+        _logger.LogInformation($"Computed summary for: {methodToSummarize.Name} with Input: {inputPattern} -> Output: {summary}");
+        return summary;
+    }
+
+    private TaintSummary ExtractOutputPattern(ControlFlowGraph cfg, Dictionary<BasicBlock, AnalysisState> finalStates, IMethodSymbol method)
+    {
+        TaintState finalReturnTaint = TaintState.NotTainted;
+        var finalParamTaint = ImmutableDictionary.CreateBuilder<int, TaintState>();
+
+        // Get state entering the exit block (merge of all paths ending normally)
+        var exitBlockEntryState = finalStates.GetValueOrDefault(cfg.Blocks[cfg.Blocks.Length-1], AnalysisState.Empty);
+
+        // Check Return Value Taint:
+        // Need to analyze IReturnOperation within blocks whose successor is the ExitBlock,
+        // using the state *before* the return operation.
+        // Simplified: Check state entering ExitBlock (less precise)
+        // A better way is required here, e.g., tracking a dedicated return value element.
+        // Let's assume conservatively if *any* variable is tainted entering exit, return is tainted.
+        if (exitBlockEntryState.TaintMap.ContainsValue(TaintState.Tainted))
+        {
+            finalReturnTaint = TaintState.Tainted; // Very conservative placeholder
+            _logger.LogTrace($"ExtractOutputPattern: Conservatively setting return taint for {method.Name}");
+        }
+
+
+        // Check Parameter Taint at Exit (for ref/out or object modifications)
+        for (int i = 0; i < method.Parameters.Length; i++)
+        {
+            // Check taint of parameter symbol in the state entering the exit block
+            TaintState paramExitTaint = exitBlockEntryState.GetTaint(method.Parameters[i]);
+            if (paramExitTaint == TaintState.Tainted)
+            {
+                finalParamTaint[i] = TaintState.Tainted;
+            }
+            // More complex: track which fields of object parameters were tainted
+        }
+
+        // TODO: Extract taint status of fields modified ('this' or parameters)
+
+        return new TaintSummary(finalReturnTaint, finalParamTaint.ToImmutable());
+    }
+
+
+
+    private AnalysisState CreateStateFromInputPattern(IMethodSymbol method, TaintInputPattern pattern)
+    {
+        var state = AnalysisState.Empty;
+        foreach (int index in pattern.TaintedParameterIndices)
+        {
+            if (index >= 0 && index < method.Parameters.Length)
+            {
+                state = state.SetTaint(method.Parameters[index], TaintState.Tainted);
+            }
+        }
+        // Handle 'this' taint based on pattern if needed
+        return state;
     }
 
     private bool IsJSInvokableMethodWithParameters(IMethodSymbol? methodSymbol)
