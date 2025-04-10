@@ -95,7 +95,6 @@ public class AnalysisOrchestrator
                 _logger.LogInformation("Running Call Graph Generator on project '{ProjectName}'...", project.Name);
                 var callGraphGenerator = new CallGraphGenerator(project, compilation);
                 CallGraph callGraph = await callGraphGenerator.CreateCallGraphAsync();
-                callGraph.Print(Console.Out);
 
                 _logger.LogInformation("Running Taint Engine on project '{ProjectName}'...", project.Name);
                 var engine = new TaintEngine(compilation,_logger,callGraph);
