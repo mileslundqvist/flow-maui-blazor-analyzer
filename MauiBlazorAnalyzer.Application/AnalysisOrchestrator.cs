@@ -3,7 +3,9 @@ using MauiBlazorAnalyzer.Core.Analysis.Interfaces;
 using MauiBlazorAnalyzer.Core.Intraprocedural.CallGraph;
 using MauiBlazorAnalyzer.Infrastructure;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.FlowAnalysis;
 using Microsoft.CodeAnalysis.Host;
+using Microsoft.CodeAnalysis.Operations;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System;
@@ -91,20 +93,30 @@ public class AnalysisOrchestrator
         }
     }
 
+
     private async Task<ProjectAnalysisResult> AnalyzeProjectAsync(Project project, Compilation compilation, CancellationToken cancellationToken)
     {
         var statistics = new ProjectAnalysisStatistics(0,0);
 
+
+        // 1. Get entrypoints
         var entryPoints = await OperationEntryPointProvider.GetEntryPointsAsync(compilation, cancellationToken);
 
-        CallGraphBuilder callGraphBuilder = new(project, compilation);
+        // 2. Create call graph from entry points
+        CallGraphBuilder callGraphBuilder = new();
         var callgraph = callGraphBuilder.Build(entryPoints);
 
-        callgraph.Print(Console.Out);
+        // 3. Intraprocedural analysis
+
+
+        // 4. 
+
+
 
 
         return new ProjectAnalysisResult([], statistics);
     }
+
 
     private async Task<ImmutableArray<AnalysisDiagnostic>> AnalyzeProjectsAsync(
         ImmutableArray<(Project Project, Compilation? Compilation)> projectsAndCompilations, 

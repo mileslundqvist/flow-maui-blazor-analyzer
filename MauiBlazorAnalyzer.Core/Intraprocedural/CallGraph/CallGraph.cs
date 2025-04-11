@@ -34,9 +34,6 @@ public class CallGraph
     {
         output.WriteLine("--- Call Graph ---");
 
-        // Choose a format for displaying symbols.
-        // MinimallyQualifiedFormat is often good for readability.
-        // CSharpErrorMessageFormat is very detailed if you need parameters/full names.
         var displayFormat = SymbolDisplayFormat.MinimallyQualifiedFormat;
         // var displayFormat = SymbolDisplayFormat.CSharpErrorMessageFormat; // Alternative
 
@@ -46,13 +43,34 @@ public class CallGraph
             var caller = kvp.Key;
             var callees = kvp.Value;
 
-            // Use ToDisplayString for the caller
-            output.WriteLine($"{caller.ToDisplayString(displayFormat)} calls:");
+            string callerString = caller.ToDisplayString(displayFormat);
+            string locationHint = "";
+            string contextHint = "";
 
-            // Order callees by their display string
+            if (caller.MethodKind == MethodKind.AnonymousFunction)
+            {
+                callerString = "lambda expression";
+
+                // Get Location
+                var location = caller.Locations.FirstOrDefault();
+                if (location != null && location.IsInSource)
+                {
+                    var lineSpan = location.GetLineSpan();
+                    locationHint = $" (in {Path.GetFileName(lineSpan.Path)}:{lineSpan.StartLinePosition.Line + 1})";
+                }
+
+                var container = caller.ContainingSymbol;
+                if (container != null)
+                {
+                    contextHint = $" (defined in {container.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)})";
+                }
+            }
+
+            // Print caller with potential context/location
+            output.WriteLine($"{callerString}{contextHint}{locationHint} calls:");
+
             foreach (var callee in callees.OrderBy(c => c.ToDisplayString(displayFormat)))
             {
-                // Use ToDisplayString for the callee
                 output.WriteLine($"  - {callee.ToDisplayString(displayFormat)}");
             }
         }

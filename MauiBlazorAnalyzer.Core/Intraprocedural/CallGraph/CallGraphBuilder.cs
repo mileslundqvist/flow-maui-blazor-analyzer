@@ -6,17 +6,9 @@ using System.Diagnostics;
 namespace MauiBlazorAnalyzer.Core.Intraprocedural.CallGraph;
 public class CallGraphBuilder : OperationWalker
 {
-    private readonly Compilation _compilation;
-    private readonly Project _project;
 
     private CallGraph _callGraph = null!;
     private Stack<IMethodSymbol> _currentMethodStack = null!; 
-
-    public CallGraphBuilder(Project project, Compilation compilation)
-    {
-        _compilation = compilation;
-        _project = project;
-    }
 
     public CallGraph Build(IEnumerable<IOperation> methodEntryPoints, CancellationToken cancellationToken = default)
     {
@@ -143,8 +135,6 @@ public class CallGraphBuilder : OperationWalker
 
         base.VisitObjectCreation(operation);
     }
-
-
 
     public override void VisitMethodBodyOperation(IMethodBodyOperation operation)
     {
