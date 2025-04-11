@@ -1,7 +1,6 @@
 ﻿using Microsoft.CodeAnalysis;
-using System.Collections.Immutable;
 
-namespace MauiBlazorAnalyzer.Core;
+namespace MauiBlazorAnalyzer.Core.Analysis;
 
 /// <summary>
 /// Configuration for an analysis run
@@ -23,15 +22,6 @@ public class AnalysisOptions
     /// </summary>
     public string? OutputPath { get; set; }
 
-    /// <summary>
-    /// Analyzer IDs to include (empty means all enabled analyzers)
-    /// </summary>
-    public ImmutableArray<string> IncludeAnalyzers { get; set; } = ImmutableArray<string>.Empty;
-
-    /// <summary>
-    /// Analyzer IDs to explicitly exclude
-    /// </summary>
-    public ImmutableArray<string> ExcludeAnalyzers { get; set; } = ImmutableArray<string>.Empty;
 
     /// <summary>
     /// Minimum severity level to report

@@ -1,7 +1,6 @@
 ﻿using Microsoft.CodeAnalysis;
 
-namespace MauiBlazorAnalyzer.Core;
-
+namespace MauiBlazorAnalyzer.Core.Analysis;
 /// <summary>
 /// Represents a diagnostic issue found during analysis.
 /// </summary>
@@ -72,4 +71,3 @@ public class AnalysisDiagnostic
             diagnostic.Descriptor.HelpLinkUri);
     }
 }
-

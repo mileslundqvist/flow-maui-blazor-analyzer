@@ -1,5 +1,5 @@
-﻿namespace MauiBlazorAnalyzer.Core;
-
+﻿
+namespace MauiBlazorAnalyzer.Core.Analysis.Interfaces;
 /// <summary>
 /// Interface for reporting analysis results
 /// </summary>

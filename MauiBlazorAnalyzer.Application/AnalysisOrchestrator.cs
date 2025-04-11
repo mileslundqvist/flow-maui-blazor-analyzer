@@ -1,29 +1,33 @@
-﻿using MauiBlazorAnalyzer.Core;
-using MauiBlazorAnalyzer.Core.CallGraph;
-using MauiBlazorAnalyzer.Core.TaintEngine;
+﻿using MauiBlazorAnalyzer.Core.Analysis;
+using MauiBlazorAnalyzer.Core.Analysis.Interfaces;
+using MauiBlazorAnalyzer.Core.Intraprocedural.CallGraph;
+using MauiBlazorAnalyzer.Infrastructure;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.Host;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
+using System;
+using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Diagnostics;
-
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
 
 namespace MauiBlazorAnalyzer.Application;
-
 public class AnalysisOrchestrator
 {
+
     private readonly IProjectLoader _projectLoader;
-    private readonly IEnumerable<IAnalyzer> _allAnalyzers;
     private readonly IReporter _reporter;
     private readonly ILogger<AnalysisOrchestrator> _logger;
 
     public AnalysisOrchestrator(
         IProjectLoader projectLoader,
-        IEnumerable<IAnalyzer> analyzers,
         IReporter reporter,
         ILogger<AnalysisOrchestrator> logger)
     {
         _projectLoader = projectLoader;
-        _allAnalyzers = analyzers;
         _reporter = reporter;
         _logger = logger;
     }
@@ -31,138 +35,144 @@ public class AnalysisOrchestrator
     public async Task RunAnalysisAsync(AnalysisOptions options, CancellationToken cancellationToken = default)
     {
         var stopwatch = Stopwatch.StartNew();
-        var allDiagnostics = ImmutableArray.CreateBuilder<AnalysisDiagnostic>();
-        int totalFiles = 0;
-        int csharpFiles = 0;
-        int razorFiles = 0;
-        string? firstErrorMessage = null;
+        var overallStatistics = new AnalysisStatistics();
+        AnalysisResult? finalResult = null;
+
+        _logger.LogInformation("Starting analysis run...");
 
         try
         {
-            _logger.LogInformation("Starting analysis run...");
-            _logger.LogInformation("Loading projects and compilations...");
-            var projectsAndCompilations = await _projectLoader.LoadProjectsAndCompilationsAsync(options.InputPath, cancellationToken);
+            // 1. Load Projects
+            var projectsAndCompilations = await LoadProjectsAndCompilationsAsync(options, cancellationToken);
 
-            if (projectsAndCompilations.IsEmpty)
-            {
-                throw new InvalidOperationException("No C# projects with compilations could be loaded.");
-            }
+            // 2. Analyze Projects
+            var allDiagnostics = await AnalyzeProjectsAsync(projectsAndCompilations, overallStatistics, cancellationToken);
 
-            // --- Analyzer Filtering ---
-            var analyzersToRun = FilterAnalyzers(options).ToList();
-            if (!analyzersToRun.Any())
-            {
-                _logger.LogWarning("No analyzers selected or available to run based on options.");
-            }
-            else
-            {
-                _logger.LogInformation("Selected Analyzers: {AnalyzerIds}", string.Join(", ", analyzersToRun.Select(a => a.Id)));
-            }
+            // 3. Filter Diagnostics
+            var filteredDiagnostics = FilterDiagnostics(allDiagnostics, options.MinimumSeverity);
+            LogFilteringResults(allDiagnostics.Count(), filteredDiagnostics.Length, options.MinimumSeverity);
 
-
-            // --- Execution ---
-            foreach (var (project, compilation) in projectsAndCompilations)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (compilation == null)
-                {
-                    _logger.LogWarning("Skipping analysis for project '{ProjectName}' due to missing compilation.", project.Name);
-                    continue;
-                }
-
-                _logger.LogInformation("Analyzing project: {ProjectName}", project.Name);
-                totalFiles += project.DocumentIds.Count + project.AdditionalDocumentIds.Count; 
-                csharpFiles += project.Documents.Count(d => d.SourceCodeKind == SourceCodeKind.Regular);
-                razorFiles += project.AdditionalDocuments.Count();
-
-                foreach (var analyzer in analyzersToRun)
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    _logger.LogDebug("Running analyzer '{AnalyzerId}' on project '{ProjectName}'...", analyzer.Id, project.Name);
-                    try
-                    {
-                        var diagnostics = await analyzer.AnalyzeCompilationAsync(project, compilation, cancellationToken);
-                        allDiagnostics.AddRange(diagnostics);
-                        _logger.LogDebug("Analyzer '{AnalyzerId}' completed, found {Count} diagnostics.", analyzer.Id, diagnostics.Length);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Analyzer '{AnalyzerId}' failed on project '{ProjectName}'.", analyzer.Id, project.Name);
-                        firstErrorMessage ??= $"Analyzer {analyzer.Id} failed: {ex.Message}";
-                    }
-                }
-
-                _logger.LogInformation("Running Call Graph Generator on project '{ProjectName}'...", project.Name);
-                var callGraphGenerator = new CallGraphGenerator(project, compilation);
-                CallGraph callGraph = await callGraphGenerator.CreateCallGraphAsync();
-
-                _logger.LogInformation("Running Taint Engine on project '{ProjectName}'...", project.Name);
-                var engine = new TaintEngine(compilation,_logger,callGraph);
-                var taintDiagnostics = await engine.AnalyzeProjectAsync();
-                allDiagnostics.AddRange(taintDiagnostics);
-            }
-
-            // --- Aggregation & Filtering ---
-            var finalDiagnostics = allDiagnostics.Where(d => d.Severity >= options.MinimumSeverity).ToImmutableArray();
-            _logger.LogInformation("Analysis phase completed. Found {InitialCount} issues, {FinalCount} meet minimum severity '{MinSeverity}'.",
-                                   allDiagnostics.Count, finalDiagnostics.Length, options.MinimumSeverity);
-
-
-            // --- Reporting ---
+            // 4. Create Success Result
             stopwatch.Stop();
-            var stats = new AnalysisStatistics
-            {
-                TotalFilesAnalyzed = totalFiles,
-                CSharpFilesAnalyzed = csharpFiles,
-                RazorFilesAnalyzed = razorFiles,
-                AnalysisDuration = stopwatch.Elapsed
-            };
-
-            AnalysisResult result;
-            if (firstErrorMessage != null)
-            {
-                result = new AnalysisResult($"Analysis completed with errors: {firstErrorMessage}", stats);
-            }
-            else
-            {
-                result = new AnalysisResult(finalDiagnostics, stats);
-            }
-
-            _logger.LogInformation("Reporting results...");
-            await _reporter.ReportAsync(result, options, cancellationToken);
-            _logger.LogInformation("Analysis run finished.");
+            overallStatistics.AnalysisDuration = stopwatch.Elapsed;
+            finalResult = AnalysisResult.CreateSuccess(filteredDiagnostics, overallStatistics);
 
         }
         catch (OperationCanceledException)
         {
             _logger.LogWarning("Analysis was cancelled.");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "An unhandled error occurred during analysis.");
             stopwatch.Stop();
-            var stats = new AnalysisStatistics { AnalysisDuration = stopwatch.Elapsed };
-            var errorResult = new AnalysisResult($"Critical analysis failure: {ex.Message}", stats);
-            await _reporter.ReportAsync(errorResult, options, CancellationToken.None);
+            overallStatistics.AnalysisDuration = stopwatch.Elapsed;
+            finalResult = AnalysisResult.CreateFailure("Analysis was cancelled.", overallStatistics);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _logger.LogError(ex, "An unhandled error occurred during the analysis orchestration.");
+            stopwatch.Stop();
+            overallStatistics.AnalysisDuration = stopwatch.Elapsed;
+            finalResult = AnalysisResult.CreateFailure($"Critical analysis failure: {ex.Message}", overallStatistics);
+        }
+        finally
+        {
+            if (finalResult != null)
+            {
+                _logger.LogInformation("Reporting analysis results...");
+                await ReportResultAsync(finalResult, options, cancellationToken);
+            }
+            else
+            {
+                _logger.LogError("Analysis finished but no final result was generated.");
+                stopwatch.Stop();
+                overallStatistics.AnalysisDuration = stopwatch.Elapsed;
+                var fallbackResult = AnalysisResult.CreateFailure("Analysis completed in an unexpected state.", overallStatistics);
+                await ReportResultAsync(fallbackResult, options, CancellationToken.None); // Use CancellationToken.None if original might be cancelled
+            }
+            _logger.LogInformation("Analysis run finished in {Duration}.", overallStatistics.AnalysisDuration);
         }
     }
 
-    private IEnumerable<IAnalyzer> FilterAnalyzers(AnalysisOptions options)
+    private async Task<ProjectAnalysisResult> AnalyzeProjectAsync(Project project, Compilation compilation, CancellationToken cancellationToken)
     {
-        IEnumerable<IAnalyzer> filtered = _allAnalyzers;
+        var statistics = new ProjectAnalysisStatistics(0,0);
 
-        // Apply Includes if specified
-        if (options.IncludeAnalyzers.Any())
+        var entryPoints = await OperationEntryPointProvider.GetEntryPointsAsync(compilation, cancellationToken);
+
+        CallGraphBuilder callGraphBuilder = new(project, compilation);
+        var callgraph = callGraphBuilder.Build(entryPoints);
+
+        callgraph.Print(Console.Out);
+
+
+        return new ProjectAnalysisResult([], statistics);
+    }
+
+    private async Task<ImmutableArray<AnalysisDiagnostic>> AnalyzeProjectsAsync(
+        ImmutableArray<(Project Project, Compilation? Compilation)> projectsAndCompilations, 
+        AnalysisStatistics overallStatistics, 
+        CancellationToken cancellationToken)
+    {
+        _logger.LogInformation("Starting analysis of loaded projects...");
+        var allDiagnosticsBuilder = ImmutableArray.CreateBuilder<AnalysisDiagnostic>();
+        int projectsAnalyzedCount = 0;
+
+        foreach (var (project, compilation) in projectsAndCompilations)
         {
-            filtered = filtered.Where(a => options.IncludeAnalyzers.Contains(a.Id));
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (compilation == null)
+            {
+                _logger.LogWarning("Skipping analysis for project '{ProjectName}' due to missing compilation.", project.Name);
+                continue;
+            }
+
+            _logger.LogInformation("Analyzing project: {ProjectName}", project.Name);
+            try
+            {
+                var projectResult = await AnalyzeProjectAsync(project, compilation, cancellationToken);
+
+                allDiagnosticsBuilder.AddRange(projectResult.Diagnostics);
+                overallStatistics.Add(projectResult.Statistics);
+                projectsAnalyzedCount++;
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to analyze project {ProjectName}. Skipping this project.", project.Name);
+            }
         }
 
-        // Apply Excludes
-        if (options.ExcludeAnalyzers.Any())
-        {
-            filtered = filtered.Where(a => !options.ExcludeAnalyzers.Contains(a.Id));
-        }
+        _logger.LogInformation("Analyzed {AnalyzedCount} out of {TotalCount} projects.", projectsAnalyzedCount, projectsAndCompilations.Count());
+        return allDiagnosticsBuilder.ToImmutable();
+    }
 
-        return filtered;
+    private async Task<ImmutableArray<(Project Project, Compilation? Compilation)>> LoadProjectsAndCompilationsAsync(AnalysisOptions options, CancellationToken cancellationToken)
+    {
+        var projectsAndCompilations = await _projectLoader.LoadProjectsAndCompilationsAsync(options.InputPath, cancellationToken);
+        if (projectsAndCompilations.IsEmpty) throw new InvalidOperationException("No C# projects with compilations could be loaded.");
+        return projectsAndCompilations;
+    }
+
+    private ImmutableArray<AnalysisDiagnostic> FilterDiagnostics(ImmutableArray<AnalysisDiagnostic> diagnostics, DiagnosticSeverity minimumSeverity)
+    {
+        return diagnostics.Where(d => d.Severity >= minimumSeverity).ToImmutableArray();
+    }
+
+    private void LogFilteringResults(int initialCount, int finalCount, DiagnosticSeverity minimumSeverity)
+    {
+        _logger.LogInformation("Analysis phase generated {InitialCount} raw diagnostics. Filtered down to {FinalCount} diagnostics matching minimum severity '{MinSeverity}'.",
+                             initialCount, finalCount, minimumSeverity);
+    }
+
+    private async Task ReportResultAsync(AnalysisResult result, AnalysisOptions options, CancellationToken cancellationToken)
+    {
+        var reportingToken = result.Succeeded ? cancellationToken : CancellationToken.None;
+        try
+        {
+            await _reporter.ReportAsync(result, options, reportingToken);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to report analysis results.");
+        }
     }
 }

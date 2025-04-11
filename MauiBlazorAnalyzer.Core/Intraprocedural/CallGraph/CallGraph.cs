@@ -1,18 +1,10 @@
 ﻿using Microsoft.CodeAnalysis;
-using System;
-using System.Collections.Generic;
-using System.Collections.Immutable;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
-namespace MauiBlazorAnalyzer.Core.CallGraph;
-
+namespace MauiBlazorAnalyzer.Core.Intraprocedural.CallGraph;
 public class CallGraph
 {
     private readonly Dictionary<IMethodSymbol, HashSet<IMethodSymbol>> _callGraph =
         new Dictionary<IMethodSymbol, HashSet<IMethodSymbol>>(SymbolEqualityComparer.Default);
-    internal CallGraph() { }
 
     public void AddEdge(IMethodSymbol caller, IMethodSymbol callee)
     {
@@ -41,15 +33,27 @@ public class CallGraph
     public void Print(TextWriter output)
     {
         output.WriteLine("--- Call Graph ---");
-        
-        foreach (var kvp in _callGraph.OrderBy(kv => kv.Key.Name))
+
+        // Choose a format for displaying symbols.
+        // MinimallyQualifiedFormat is often good for readability.
+        // CSharpErrorMessageFormat is very detailed if you need parameters/full names.
+        var displayFormat = SymbolDisplayFormat.MinimallyQualifiedFormat;
+        // var displayFormat = SymbolDisplayFormat.CSharpErrorMessageFormat; // Alternative
+
+        // Order by the display string representation for consistency
+        foreach (var kvp in _callGraph.OrderBy(kv => kv.Key.ToDisplayString(displayFormat)))
         {
             var caller = kvp.Key;
             var callees = kvp.Value;
-            output.WriteLine($"{caller.ContainingType.Name}.{caller.Name} calls:");
-            foreach (var callee in callees.OrderBy(c => c.Name))
+
+            // Use ToDisplayString for the caller
+            output.WriteLine($"{caller.ToDisplayString(displayFormat)} calls:");
+
+            // Order callees by their display string
+            foreach (var callee in callees.OrderBy(c => c.ToDisplayString(displayFormat)))
             {
-                output.WriteLine($"  - {callee.ContainingType.Name}.{callee.Name}");
+                // Use ToDisplayString for the callee
+                output.WriteLine($"  - {callee.ToDisplayString(displayFormat)}");
             }
         }
         output.WriteLine("--- End Call Graph ---");
