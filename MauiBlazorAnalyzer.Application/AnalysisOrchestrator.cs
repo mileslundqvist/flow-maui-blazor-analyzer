@@ -1,20 +1,14 @@
 ﻿using MauiBlazorAnalyzer.Core.Analysis;
+using MauiBlazorAnalyzer.Core.Analysis.CallGraph;
 using MauiBlazorAnalyzer.Core.Analysis.Interfaces;
-using MauiBlazorAnalyzer.Core.Intraprocedural.CallGraph;
-using MauiBlazorAnalyzer.Infrastructure;
+using MauiBlazorAnalyzer.Core.Analysis.Taint;
+using MauiBlazorAnalyzer.Core.Interprocedural;
+using MauiBlazorAnalyzer.Core.Intraprocedural.Context;
 using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.FlowAnalysis;
-using Microsoft.CodeAnalysis.Host;
 using Microsoft.CodeAnalysis.Operations;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
-using System;
-using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Diagnostics;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace MauiBlazorAnalyzer.Application;
 public class AnalysisOrchestrator
@@ -87,7 +81,7 @@ public class AnalysisOrchestrator
                 stopwatch.Stop();
                 overallStatistics.AnalysisDuration = stopwatch.Elapsed;
                 var fallbackResult = AnalysisResult.CreateFailure("Analysis completed in an unexpected state.", overallStatistics);
-                await ReportResultAsync(fallbackResult, options, CancellationToken.None); // Use CancellationToken.None if original might be cancelled
+                await ReportResultAsync(fallbackResult, options, CancellationToken.None);
             }
             _logger.LogInformation("Analysis run finished in {Duration}.", overallStatistics.AnalysisDuration);
         }
@@ -98,18 +92,88 @@ public class AnalysisOrchestrator
     {
         var statistics = new ProjectAnalysisStatistics(0,0);
 
+        // 1. Get initial method analysis contexts Dictionary<IMethodSymbol, MethodAnalysisContext>
+        var methodAnalysisContexts = await MethodAnalysisContextProvider.GetMethodAnalysisContexts(compilation, cancellationToken);
 
-        // 1. Get entrypoints
-        var entryPoints = await OperationEntryPointProvider.GetEntryPointsAsync(compilation, cancellationToken);
-
-        // 2. Create call graph from entry points
+        // 2. Create call graph Dictionary<IMethodSymbol, HashSet<IMethodSymbol>>
         CallGraphBuilder callGraphBuilder = new();
-        var callgraph = callGraphBuilder.Build(entryPoints);
+        var callGraph = callGraphBuilder.Build(methodAnalysisContexts);
 
-        // 3. Intraprocedural analysis
+        ICFGProvider iCFGProvider = new();
+        iCFGProvider.BuildICFG(compilation, callGraph);
 
+        //foreach (var callerContext in methodAnalysisContexts.Values)
+        //{
+        //    if (!callerContext.MethodSymbol.ToDisplayString().Contains("Dangerous"))
+        //    {
+        //        continue;
+        //    }
 
-        // 4. 
+        //    var callerCFG = callerContext.ControlFlowGraph;
+
+        //    if (callerCFG == null) continue;
+
+        //    foreach (var block in callerCFG.Blocks)
+        //    {
+        //        foreach (var operation in block.Operations)
+        //        {
+        //            if (operation is IExpressionStatementOperation expressionOperation)
+        //            {
+        //                // Return value is assigned to a variable
+        //                if (expressionOperation.Operation is ISimpleAssignmentOperation simpleAssignmentOperation)
+        //                {
+        //                    if (simpleAssignmentOperation.Value is IInvocationOperation invocationOperation)
+        //                    {
+                                
+        //                        var calleeContext = callGraph.GetCallees(callerContext.MethodSymbol);
+
+        //                        if (calleeContext == null) continue;
+
+        //                        if (calleeContext.Count() > 0)
+        //                        {
+        //                            foreach (var callee in calleeContext)
+        //                            {
+        //                                var from = new ICFGNode(operation, callerContext);
+        //                                var to = new ICFGNode(callee.Operation, callee);
+        //                                ICFG.AddEdge(from, to);
+        //                            }
+        //                        }
+        //                    }
+        //                }
+
+        //                // A method is just called
+        //                if (expressionOperation.Operation is IInvocationOperation invocation)
+        //                {
+        //                    var calleeContext = callGraph.GetCallees(callerContext.MethodSymbol);
+
+        //                    if (calleeContext == null) continue;
+
+        //                    if (calleeContext.Count() > 0)
+        //                    {
+        //                        foreach (var callee in calleeContext)
+        //                        {
+        //                            var from = new ICFGNode(operation, callerContext);
+        //                            var to = new ICFGNode(callee.Operation, callee);
+        //                            ICFG.AddEdge(from, to);
+        //                        }
+        //                    }
+        //                }
+        //            }
+        //        }
+        //    }
+        //}
+       
+        
+        // 3. We have a call graph of the methods in the program, however we need to properly having the  
+        //EntryPointProvider entryPointProvider = new();
+        //var initialEntryPoints = entryPointProvider.FindEntryPoints(compilation);
+
+        //ReachableMethodFinder reachableMethodFinder = new();
+        //var reachableMethods = reachableMethodFinder.FindReachableMethods(compilation, callgraph, initialEntryPoints);
+
+        //var reachableApplicationMethods = reachableMethods.Where(methodSymbol => methodSymbol.ToDisplayString().StartsWith(compilation.AssemblyName));
+
+        //TaintAnalysisProblem taintAnalysisProblem = new(compilation, reachableApplicationMethods.ToImmutableHashSet());
 
 
 
