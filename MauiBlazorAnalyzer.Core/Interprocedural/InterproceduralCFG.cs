@@ -80,14 +80,13 @@ public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
         // is used if the key does not exist.
         _successorsComputed.AddOrUpdate(node,
             (key) => { ComputeSuccessors(key); return true; },
-            (key, existingValue) => existingValue
-            );
+            (key, existingValue) => existingValue);
     }
 
     private void ComputeSuccessors(ICFGNode node)
     {
         // 1. Necessary Roslyn Context
-        SemanticModel semanticModel = node.Operation.SemanticModel;
+        SemanticModel? semanticModel = node?.MethodContext?.Operation?.SemanticModel;
         if (semanticModel == null)
         {
             // TODO: Log error

@@ -6,6 +6,7 @@ using MauiBlazorAnalyzer.Core.Intraprocedural.Context;
 using Microsoft.CodeAnalysis;
 using Microsoft.Extensions.Logging;
 using System.Collections.Immutable;
+using System.ComponentModel.Design.Serialization;
 using System.Diagnostics;
 
 namespace MauiBlazorAnalyzer.Application;
@@ -91,14 +92,18 @@ public class AnalysisOrchestrator
         var statistics = new ProjectAnalysisStatistics(0,0);
 
         // 1. Get initial method analysis contexts Dictionary<IMethodSymbol, MethodAnalysisContext>
-        var methodAnalysisContexts = await MethodAnalysisContextProvider.GetMethodAnalysisContexts(compilation, cancellationToken);
+        //var methodAnalysisContexts = await MethodAnalysisContextProvider.GetMethodAnalysisContexts(compilation, cancellationToken);
 
         // 2. Create call graph Dictionary<IMethodSymbol, HashSet<IMethodSymbol>>
-        CallGraphBuilder callGraphBuilder = new();
-        var callGraph = callGraphBuilder.Build(methodAnalysisContexts);
+        //CallGraphBuilder callGraphBuilder = new();
+        //var callGraph = callGraphBuilder.Build(methodAnalysisContexts);
+
+        // Creating a small set of nodes to start from for testing
 
 
-        var taintAnalysisProblem = new TaintAnalysisProblem(compilation, Enumerable.Empty<ICFGNode>());
+        var entryNodes = await EntryNodeBuilder.BuildEntryNodesAsync(compilation, cancellationToken);
+        var taintAnalysisProblem = new TaintAnalysisProblem(compilation, entryNodes);
+
         var solver = new IFDSSolver(taintAnalysisProblem);
         var result = solver.Solve();
         //ICFGProvider iCFGProvider = new();
@@ -123,7 +128,6 @@ public class AnalysisOrchestrator
 
         return new ProjectAnalysisResult([], statistics);
     }
-
 
     private async Task<ImmutableArray<AnalysisDiagnostic>> AnalyzeProjectsAsync(
         ImmutableArray<(Project Project, Compilation? Compilation)> projectsAndCompilations, 

@@ -1,36 +1,49 @@
-﻿using Microsoft.CodeAnalysis;
+﻿using MauiBlazorAnalyzer.Core.Intraprocedural.Context;
+using Microsoft.CodeAnalysis;
+using System.Collections.Frozen;
+using System.Collections.Immutable;
+using System.Linq;
 
 namespace MauiBlazorAnalyzer.Core.Interprocedural;
 public class TaintAnalysisProblem : IFDSTabulationProblem
 {
     private readonly InterproceduralCFG _graph;
     private readonly IFlowFunctions _flowFunctions;
-    private readonly IReadOnlyDictionary<ICFGNode, ISet<TaintFact>> _initialSeeds;
     private readonly ZeroFact _zeroValue = ZeroFact.Instance;
 
     public InterproceduralCFG Graph => _graph;
     public IFlowFunctions FlowFunctions => _flowFunctions;
-    public IReadOnlyDictionary<ICFGNode, ISet<TaintFact>> InitialSeeds => _initialSeeds;
+    public IReadOnlyDictionary<ICFGNode, ISet<IFact>> InitialSeeds { get; }
     public ZeroFact ZeroValue => _zeroValue;
 
 
-    public TaintAnalysisProblem(Compilation compilation, IEnumerable<ICFGNode> initialEntryNodes)
+    public TaintAnalysisProblem(Compilation compilation, IEnumerable<ICFGNode> roots)
     {
-        _graph = new InterproceduralCFG(compilation, initialEntryNodes);
+        _graph = new InterproceduralCFG(compilation, roots);
         _flowFunctions = new TaintFlowFunctions();
-        _initialSeeds = ComputeInitialSeeds(_graph);
+        InitialSeeds = ComputeInitialSeeds(_graph);
     }
 
-    private IReadOnlyDictionary<ICFGNode, ISet<TaintFact>> ComputeInitialSeeds(InterproceduralCFG graph)
+    private IReadOnlyDictionary<ICFGNode, ISet<IFact>> ComputeInitialSeeds(InterproceduralCFG graph)
     {
-        var seeds = new Dictionary<ICFGNode, ISet<TaintFact>>();
+        Dictionary<ICFGNode, HashSet<IFact>> initialSeeds = new();
 
-        foreach (ICFGNode node in _graph.Nodes)
+        foreach (var node in _graph.EntryNodes)
         {
-            var factSet = new HashSet<TaintFact>();
-            seeds.Add(node, factSet);
+            var entryFacts = new HashSet<IFact>();
+            if (node.MethodContext.MethodSymbol.GetAttributes()
+                .Any(a => a.AttributeClass?.ToDisplayString() == "Microsoft.JSInterop.JSInvokableAttribute"))
+            {
+                var taintFact = new TaintFact(node.MethodContext.MethodSymbol);
+                entryFacts.Add(taintFact);
+            }
+            else
+            {
+                entryFacts.Add(_zeroValue);
+            }
+            initialSeeds.Add(node, entryFacts);
         }
 
-        return seeds;
+        return (IReadOnlyDictionary<ICFGNode, ISet<IFact>>)initialSeeds;
     }
 }

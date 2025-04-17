@@ -3,7 +3,6 @@
 namespace MauiBlazorAnalyzer.Core.Interprocedural;
 public record TaintFact : IFact
 {
-
     public ISymbol? TaintedSymbol { get; }
 
     public TaintFact(ISymbol? taintedSymbol)
