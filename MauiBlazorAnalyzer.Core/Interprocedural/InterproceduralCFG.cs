@@ -16,19 +16,23 @@ public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
 
     // -- State for Demand-Drive Computation --
     private readonly ConcurrentDictionary<ICFGNode, bool> _successorsComputed = new();
+    private readonly ConcurrentDictionary<IMethodSymbol, ICFGNode> _entryByMethod = new(SymbolEqualityComparer.Default);
 
     // Entry point(s)
-    public List<ICFGNode> EntryNodes { get; } = new();
+    public IReadOnlyCollection<ICFGNode> EntryNodes { get; }
 
 
     public InterproceduralCFG(Compilation compilation, IEnumerable<ICFGNode> initialEntryNodes)
     {
         _compilation = compilation ?? throw new ArgumentNullException(nameof(compilation));
+        var list = new List<ICFGNode>();
         foreach (var entry in initialEntryNodes)
         {
             AddNodeInternal(entry);
-            EntryNodes.Add(entry);
+            list.Add(entry);
+            _entryByMethod.TryAdd(entry.MethodContext.MethodSymbol, entry);
         }
+        EntryNodes = list;
     }
 
     // -- Public API --
@@ -45,6 +49,26 @@ public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
     public IEnumerable<ICFGEdge> GetIncomingEdges(ICFGNode node)
     {
         return _predecessors.TryGetValue(node, out var edges) ? edges : Enumerable.Empty<ICFGEdge>();
+    }
+
+    public ICFGNode GetEntryNode(ICFGNode anyNode)
+    {
+        if (_entryByMethod.TryGetValue(anyNode.MethodContext.MethodSymbol, out var entry))
+        {
+            return entry;
+        }
+
+        var context = anyNode.MethodContext;
+        var en = new ICFGNode(null, context, ICFGNodeKind.Entry);
+        AddNodeInternal(en);
+        _entryByMethod[context.MethodSymbol] = en;
+        return en;
+    }
+
+    public ICFGEdge? TryGetCallEdge(ICFGNode callSite, ICFGNode calleeEntry)
+    {
+        EnsureSuccessorsComputed(callSite);
+        return _successors.TryGetValue(callSite, out var list) ? list.FirstOrDefault(e => e.Type == EdgeType.Call) : null;
     }
 
     // -- Core Demand-Driven Logic --
@@ -188,9 +212,4 @@ public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
         }
     }
 
-    // Placeholder for complex parts - IMPLEMENT THESE WITH DETAILED ROSLYN LOGIC
-    private void ComputeReturnEdges(ICFGNode exitNode, SemanticModel model) { /* Complex: Find callers and link to return sites */ }
-    private void ComputeCallEdges(ICFGNode callSiteNode, IInvocationOperation invocation, SemanticModel model) { /* Implemented partially above, needs refinement */ }
-    private IOperation? FindNextOperationAfter(IInvocationOperation invocation) { /* Helper to find subsequent operation */ return null; }
-    private MethodAnalysisContext GetOrCreateMethodContext(IMethodSymbol targetMethod, Compilation compilation) { /* Helper to manage contexts */ throw new NotImplementedException(); }
 }
