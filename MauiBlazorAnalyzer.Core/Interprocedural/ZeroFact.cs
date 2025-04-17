@@ -5,7 +5,8 @@ using System.Text;
 using System.Threading.Tasks;
 
 namespace MauiBlazorAnalyzer.Core.Interprocedural;
-public interface IInterproceduralCFG<N,M>
+public sealed record ZeroFact : IFact
 {
-
+    public static readonly ZeroFact Instance = new ZeroFact();
+    private ZeroFact() { }
 }

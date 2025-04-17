@@ -1,11 +1,4 @@
-﻿using MauiBlazorAnalyzer.Core.Analysis.Taint;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-namespace MauiBlazorAnalyzer.Core.Interprocedural;
+﻿namespace MauiBlazorAnalyzer.Core.Interprocedural;
 
 public enum EdgeType { Intraprocedural, Call, Return, CallToReturn }
 
