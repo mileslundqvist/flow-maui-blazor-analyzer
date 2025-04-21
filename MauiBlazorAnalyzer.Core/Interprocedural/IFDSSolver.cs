@@ -42,11 +42,11 @@ public class IFDSSolver
         _summaryEdges.Clear();
 
         var initial = _problem.InitialSeeds;
-        foreach (var kvp in initial)
+        foreach (var (node, facts) in initial)
         {
-            foreach (var fact in kvp.Value)
+            foreach (var fact in facts)
             {
-                Propagate(kvp.Key, fact, kvp.Key, fact, enqueueZero: true);
+                Propagate(node, fact, node, fact);
             }
         }
     }
@@ -63,35 +63,36 @@ public class IFDSSolver
                 // -- ZeroFact Handling --
                 if (fact.Equals(_problem.ZeroValue))
                 {
-                    switch (edge.Type)
-                    {
-                        case EdgeType.Call:
-                            // propagate ⊥ to callee entry
-                            var calleeEntry = _graph.GetEntryNode(edge.To);
-                            Propagate(calleeEntry, fact, node, fact, enqueueZero: true);
-                            break;
-                        case EdgeType.CallToReturn:
-                        case EdgeType.Return:
-                            // propagate ⊥ straight across
-                            Propagate(edge.To, fact, node, fact, enqueueZero: true);
-                            break;
-                            // Intraprocedural edges do *not* carry ⊥.
-                    }
+                    Propagate(edge.To, fact, node, fact);
                     continue; // skip user flow‑functions for ⊥
                 }
 
-                // —— Non‑zero facts (= TaintFact) --
-
+                // -- Non‑zero facts (= TaintFact) --
                 var tFact = (TaintFact)fact;
-                ISet<TaintFact> successorFacts = edge.Type switch
-                {
-                    EdgeType.Intraprocedural => _problem.FlowFunctions.GetNormalFlowFunction(edge, tFact)?.ComputeTargets(tFact) ?? new HashSet<TaintFact>(),
-                    EdgeType.Call => HandleCallEdge(edge, tFact),
-                    EdgeType.Return => HandleReturnFlow(edge, tFact),
-                    EdgeType.CallToReturn => _problem.FlowFunctions.GetCallToReturnFlowFunction(edge, tFact)?.ComputeTargets(tFact) ?? new HashSet<TaintFact>(),
-                    _ => new HashSet<TaintFact>()
-                };
+                ISet<TaintFact> successorFacts = new HashSet<TaintFact>(); // Initialize empty set
 
+                switch (edge.Type)
+                {
+                    case EdgeType.Intraprocedural:
+                        var normalFlow = _problem.FlowFunctions.GetNormalFlowFunction(edge, tFact);
+                        successorFacts.UnionWith(normalFlow?.ComputeTargets(tFact) ?? new HashSet<TaintFact>());
+                        break;
+
+                    case EdgeType.Call:
+                        successorFacts.UnionWith(HandleCall(edge, tFact));
+                        break;
+
+                    case EdgeType.Return:
+                        successorFacts.UnionWith(HandleReturn(edge, tFact));
+                        break;
+
+                    case EdgeType.CallToReturn:
+                        var ctrFlow = _problem.FlowFunctions.GetCallToReturnFlowFunction(edge, tFact);
+                        successorFacts.UnionWith(ctrFlow?.ComputeTargets(tFact) ?? new HashSet<TaintFact>());
+                        break;
+                }
+
+                // Propagate the calculated successor facts to the target node (edge.To)
                 foreach (var succesorFact in successorFacts)
                 {
                     Propagate(edge.To, succesorFact, node, tFact);
@@ -101,67 +102,71 @@ public class IFDSSolver
     }
 
     // Call edge handling (non-zero facts)
-    private ISet<TaintFact> HandleCallEdge(ICFGEdge callEdge, TaintFact inFact)
+    private ISet<TaintFact> HandleCall(ICFGEdge callEdge, TaintFact inFactAtCallsite)
     {
-        var summaryKey = (callEdge.To, inFact);
+        var calleeEntry = _graph.GetEntryNode(callEdge.To);
 
-        if (_summaryEdges.TryGetValue(summaryKey, out var cached))
+        var callFlowFunction = _problem.FlowFunctions.GetCallFlowFunction(callEdge, inFactAtCallsite);
+        var inFactsAtEntry = callFlowFunction?.ComputeTargets(inFactAtCallsite) ?? new HashSet<TaintFact>();
+
+        if (_summaryEdges.TryGetValue((calleeEntry, inFactAtCallsite), out var cachedExitFacts))
         {
-            return cached;
+            // Summary found, propagate results directly to the return site
+
+            var callToReturnEdgeTarget = _graph
+                .GetOutgoingEdges(callEdge.From)
+                .FirstOrDefault(e => e.Type == EdgeType.CallToReturn && e.From.Equals(callEdge.From))?.To;
+
+            if (callToReturnEdgeTarget != null)
+            {
+                foreach (var exitFact in cachedExitFacts)
+                {
+                    var returnFunction = _problem.FlowFunctions.GetReturnFlowFunction(null, exitFact, inFactAtCallsite); // Pass null for edge, ReturnFlow might not need it
+                    var returnSiteFacts = returnFunction?.ComputeTargets(exitFact) ?? new HashSet<TaintFact>();
+
+                    foreach (var returnFact in returnSiteFacts)
+                    {
+                        Propagate(callToReturnEdgeTarget, returnFact, callEdge.From, inFactAtCallsite);
+                    }
+                }
+            }
         }
 
-        var callFlowFunction = _problem.FlowFunctions.GetCallFlowFunction(callEdge, inFact);
-        var seeds = callFlowFunction?.ComputeTargets(inFact) ?? new HashSet<TaintFact>();
-
-        foreach (var seedFact in seeds)
-        {
-            Propagate(callEdge.To, seedFact, predecessorNode: callEdge.From, predecessorFact: inFact);
-        }
-
-        var empty = new HashSet<TaintFact>();
-        _summaryEdges[summaryKey] = empty;
-        return empty;
+        return inFactsAtEntry;
 
     }
 
     // Return edge handling (non-zero facts)
-    private ISet<TaintFact> HandleReturnFlow(ICFGEdge returnEdge, TaintFact exitFact)
+    private ISet<TaintFact> HandleReturn(ICFGEdge returnEdge, TaintFact exitFact)
     {
-        var calleeEntry = _graph.GetEntryNode(returnEdge.From);
+        var calleeExitNode = returnEdge.From;
+        var calleeEntry = _graph.GetEntryNode(calleeExitNode);
 
-        var incomingPairs = _pathEdges.Where(kvp => kvp.Key.node == returnEdge.From && kvp.Key.fact.Equals(exitFact)).SelectMany(kvp => kvp.Value);
+        var predecessors = _pathEdges.TryGetValue((calleeExitNode, exitFact), out var p) ? p : Enumerable.Empty<(ICFGNode, IFact)>();
+        var outSet = new HashSet<TaintFact>();
 
-        var results = new HashSet<TaintFact>();
-
-        foreach (var (callSite, callFactRaw) in incomingPairs)
+        foreach (var (callSite, callFactRaw) in predecessors)
         {
             if (callFactRaw is not TaintFact callFact) continue; // Ignore ZeroFact predecessors
-            var callEdge = _graph.TryGetCallEdge(callSite, calleeEntry);
-            if (callEdge is null) continue;
 
             var returnFunction = _problem.FlowFunctions.GetReturnFlowFunction(returnEdge, exitFact, callFact);
             var targets = returnFunction?.ComputeTargets(exitFact) ?? new HashSet<TaintFact>();
 
-            var key = (calleeEntry, callFact);
-            if (!_summaryEdges.TryGetValue(key, out var set))
+            // Add results to the set of facts flowing back to the return site
+            outSet.UnionWith(targets);
+
+            var summaryKey = (calleeEntry, callFact);
+            if (!_summaryEdges.TryGetValue(summaryKey, out var set))
             {
-                _summaryEdges[key] = set = new HashSet<TaintFact>();
+                _summaryEdges[summaryKey] = set = new HashSet<TaintFact>();
             }
             set.UnionWith(targets);
-            results.UnionWith(targets);
         }
-        return results;
+
+        return outSet;
     }
 
-    // Placeholder for the complex logic of finding relevant call site facts
-    private IEnumerable<(ICFGNode callSiteNode, TaintFact callSiteFact)> FindRelevantCallSiteFacts(ICFGNode exitNode, TaintFact exitFact)
-    {
-        // Implementation depends on how you track paths/contexts.
-        // Needs to query _pathEdges or similar structures built during propagation.
-        yield break; // Replace with actual implementation
-    }
-
-    private void Propagate(ICFGNode targetNode, IFact targetFact, ICFGNode predecessorNode, IFact predecessorFact, bool enqueueZero = false)
+    private void Propagate(ICFGNode targetNode, IFact targetFact, ICFGNode predecessorNode, IFact predecessorFact)
     {
 
         // Record taint facts in the user-visible result
@@ -172,15 +177,27 @@ public class IFDSSolver
             set.Add(taintFact);
         }
 
-        // Track all facts in the path-edge graph
+        // Track all facts (including ZeroFact) in the path-edge graph
         var key = (targetNode, targetFact);
         if (!_pathEdges.TryGetValue(key, out var preds))
             _pathEdges[key] = preds = new HashSet<(ICFGNode, IFact)>();
-        preds.Add((predecessorNode, predecessorFact));
 
-        // Work-set management
-        if (enqueueZero || targetFact is TaintFact && _inQueue.Add(key))
-            _workQueue.Enqueue(key);
+        // Only add the predecessor if it's new to avoid infinite loops on cycles if not using _inQueue
+        // (though _inQueue handles the worklist part, path edges can still cycle)
+        if (preds.Add((predecessorNode, predecessorFact)))
+        {
+            // If a new path edge is discovered, potentially add target to worklist
+            if (_inQueue.Add(key)) // Check if (targetNode, targetFact) is already in the work queue
+            {
+                _workQueue.Enqueue(key);
+            }
+        }
+    }
 
+    private ISet<TaintFact> MergeSummary(ICFGEdge ctr, ISet<TaintFact> curr)
+    {
+        if (_summaryEdges.TryGetValue((ctr.From, (IFact)curr.FirstOrDefault() ?? _problem.ZeroValue), out var summary))
+            curr.UnionWith(summary);
+        return curr;
     }
 }

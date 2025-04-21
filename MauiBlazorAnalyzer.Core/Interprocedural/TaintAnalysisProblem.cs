@@ -26,24 +26,25 @@ public class TaintAnalysisProblem : IFDSTabulationProblem
 
     private IReadOnlyDictionary<ICFGNode, ISet<IFact>> ComputeInitialSeeds(InterproceduralCFG graph)
     {
-        Dictionary<ICFGNode, HashSet<IFact>> initialSeeds = new();
+        var initialSeeds = new Dictionary<ICFGNode, ISet<IFact>>();
 
         foreach (var node in _graph.EntryNodes)
         {
-            var entryFacts = new HashSet<IFact>();
-            if (node.MethodContext.MethodSymbol.GetAttributes()
+            var entryFacts = new HashSet<IFact> { _zeroValue };
+
+            var method = node.MethodContext.MethodSymbol;
+            if (method.GetAttributes()
                 .Any(a => a.AttributeClass?.ToDisplayString() == "Microsoft.JSInterop.JSInvokableAttribute"))
             {
-                var taintFact = new TaintFact(node.MethodContext.MethodSymbol);
-                entryFacts.Add(taintFact);
+                foreach (var parameter in method.Parameters)
+                {
+                    var path = new AccessPath(parameter, ImmutableArray<IFieldSymbol>.Empty);
+                    entryFacts.Add(new TaintFact(path));
+                }
             }
-            else
-            {
-                entryFacts.Add(_zeroValue);
-            }
-            initialSeeds.Add(node, entryFacts);
+            initialSeeds[node] = entryFacts;
         }
 
-        return (IReadOnlyDictionary<ICFGNode, ISet<IFact>>)initialSeeds;
+        return initialSeeds;
     }
 }

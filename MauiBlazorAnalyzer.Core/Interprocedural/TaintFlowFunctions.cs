@@ -1,35 +1,20 @@
-﻿using Microsoft.CodeAnalysis.Operations;
+﻿using MauiBlazorAnalyzer.Core.Interprocedural.DB;
+using MauiBlazorAnalyzer.Core.Interprocedural.FlowFunctions;
+using Microsoft.CodeAnalysis.Operations;
 
 namespace MauiBlazorAnalyzer.Core.Interprocedural;
-public class TaintFlowFunctions : IFlowFunctions
+public sealed class TaintFlowFunctions : IFlowFunctions
 {
-    private static readonly IFlowFunction Identity = new LambdaFlowFunction(fact => new HashSet<TaintFact> { fact });
-    private static readonly IFlowFunction KillAll = new LambdaFlowFunction(fact => new HashSet<TaintFact>());
+    private readonly TaintSpecDB _db = TaintSpecDB.Instance;
 
-    public IFlowFunction GetCallFlowFunction(ICFGEdge edge, TaintFact sourceFact)
-    {
-        var operation = edge.From.Operation;
+    public IFlowFunction GetCallFlowFunction(ICFGEdge edge, TaintFact inFact)
+        => new CallFlow(edge, _db);
 
-        if (operation is IAssignmentOperation assignment)
-        {
-            
-        }
+    public IFlowFunction GetCallToReturnFlowFunction(ICFGEdge edge, TaintFact inFact)
+        => new CallToReturnFlow(edge, _db);
 
-        return Identity;
-    }
-
-    public IFlowFunction GetCallToReturnFlowFunction(ICFGEdge edge, TaintFact sourceFact)
-    {
-        throw new NotImplementedException();
-    }
-
-    public IFlowFunction GetNormalFlowFunction(ICFGEdge edge, TaintFact sourceFact)
-    {
-        throw new NotImplementedException();
-    }
-
+    public IFlowFunction GetNormalFlowFunction(ICFGEdge edge, TaintFact inFact)
+        => new NormalFlow(edge, _db);
     public IFlowFunction GetReturnFlowFunction(ICFGEdge edge, TaintFact exitFact, TaintFact callsiteFact)
-    {
-        throw new NotImplementedException();
-    }
+        => new ReturnFlow(edge, exitFact, callsiteFact, _db);
 }

@@ -16,7 +16,7 @@ public static class EntryNodeBuilder
                                               .Distinct<IMethodSymbol>(SymbolEqualityComparer.Default)
                                               .ToList();
                                               
-
+         
         // 2. Resolve MethodAnalysisContexts (with SemanticModel & IOperation)
         var dict = await MethodAnalysisContextProvider.GetMethodAnalysisContexts(compilation, cancellationToken);
 

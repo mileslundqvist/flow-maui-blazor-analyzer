@@ -1,4 +1,5 @@
 ﻿using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.FlowAnalysis;
 using Microsoft.CodeAnalysis.Operations;
 
@@ -6,45 +7,27 @@ namespace MauiBlazorAnalyzer.Core.Intraprocedural.Context;
 public class MethodAnalysisContext
 {
     public readonly IMethodSymbol MethodSymbol;
-    public readonly IOperation Operation;
-    //MethodSummary? _methodSummary; TODO: Add this when summaries are implemented.
+    public IOperation RootOperation;
 
-    ControlFlowGraph? _controlFlowGraph;
-    private bool _isControlFlowGraphComputed = false;
-
-    public ControlFlowGraph? ControlFlowGraph
-    {
-        get
-        {
-            if (!_isControlFlowGraphComputed && Operation != null)
-            {
-                ComputeControlFlowGraph();
-                _isControlFlowGraphComputed = true;
-            }
-            return _controlFlowGraph;
-        }
-    }
-
-
-    public MethodAnalysisContext(IMethodSymbol methodSymbol, IOperation operation)
+    public MethodAnalysisContext(IMethodSymbol methodSymbol, IOperation operation = null)
     {
         MethodSymbol = methodSymbol ?? throw new ArgumentNullException(nameof(methodSymbol));
-        Operation = operation ?? throw new ArgumentNullException(nameof(operation));
+        RootOperation = operation;
     }
 
-
-    private void ComputeControlFlowGraph()
+    public IOperation? EnsureOperation(Compilation compilation)
     {
-        if (Operation is IMethodBodyOperation methodBodyOperation)
-        {
+        if (RootOperation != null) return RootOperation;
 
-            _controlFlowGraph = ControlFlowGraph.Create(methodBodyOperation);
-        }
-        else if (Operation is IConstructorBodyOperation constructorBodyOperation)
-        {
+        var decl = MethodSymbol.DeclaringSyntaxReferences
+            .Select(r => r.GetSyntax())
+            .OfType<BaseMethodDeclarationSyntax>()
+            .FirstOrDefault(d => d.Body != null || d.ExpressionBody != null);
 
-            _controlFlowGraph = ControlFlowGraph.Create(constructorBodyOperation);
-        }
+        if (decl == null) return null;
+        var model = compilation.GetSemanticModel(decl.SyntaxTree);
+        RootOperation = model.GetOperation(decl);
+        return RootOperation;
     }
 
     public override bool Equals(object? obj)

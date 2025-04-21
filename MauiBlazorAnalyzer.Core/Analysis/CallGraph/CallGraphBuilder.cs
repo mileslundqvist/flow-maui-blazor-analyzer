@@ -28,7 +28,7 @@ public class CallGraphBuilder : OperationWalker
 
             _currentMethodStack.Push(methodSymbol);
 
-            Visit(context.Operation);
+            Visit(context.RootOperation);
 
             if (_currentMethodStack.Count > 0 && SymbolEqualityComparer.Default.Equals(_currentMethodStack.Peek(), methodSymbol))
             {

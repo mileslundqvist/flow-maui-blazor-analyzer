@@ -1,12 +1,9 @@
 ﻿using MauiBlazorAnalyzer.Core.Analysis;
-using MauiBlazorAnalyzer.Core.Analysis.CallGraph;
 using MauiBlazorAnalyzer.Core.Analysis.Interfaces;
 using MauiBlazorAnalyzer.Core.Interprocedural;
-using MauiBlazorAnalyzer.Core.Intraprocedural.Context;
 using Microsoft.CodeAnalysis;
 using Microsoft.Extensions.Logging;
 using System.Collections.Immutable;
-using System.ComponentModel.Design.Serialization;
 using System.Diagnostics;
 
 namespace MauiBlazorAnalyzer.Application;
@@ -106,24 +103,6 @@ public class AnalysisOrchestrator
 
         var solver = new IFDSSolver(taintAnalysisProblem);
         var result = solver.Solve();
-        //ICFGProvider iCFGProvider = new();
-        //iCFGProvider.BuildICFG(compilation, callGraph);
-
-
-       
-        
-        // 3. We have a call graph of the methods in the program, however we need to properly having the  
-        //EntryPointProvider entryPointProvider = new();
-        //var initialEntryPoints = entryPointProvider.FindEntryPoints(compilation);
-
-        //ReachableMethodFinder reachableMethodFinder = new();
-        //var reachableMethods = reachableMethodFinder.FindReachableMethods(compilation, callgraph, initialEntryPoints);
-
-        //var reachableApplicationMethods = reachableMethods.Where(methodSymbol => methodSymbol.ToDisplayString().StartsWith(compilation.AssemblyName));
-
-        //TaintAnalysisProblem taintAnalysisProblem = new(compilation, reachableApplicationMethods.ToImmutableHashSet());
-
-
 
 
         return new ProjectAnalysisResult([], statistics);
