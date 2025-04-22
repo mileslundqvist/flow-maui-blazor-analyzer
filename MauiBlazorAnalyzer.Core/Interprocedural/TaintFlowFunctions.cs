@@ -6,15 +6,15 @@ public sealed class TaintFlowFunctions : IFlowFunctions
 {
     private readonly TaintSpecDB _db = TaintSpecDB.Instance;
 
-    public IFlowFunction GetCallFlowFunction(ICFGEdge edge, TaintFact inFact)
+    public IFlowFunction GetCallFlowFunction(ICFGEdge edge)
         => new CallFlow(edge, _db);
 
-    public IFlowFunction GetCallToReturnFlowFunction(ICFGEdge edge, TaintFact inFact)
+    public IFlowFunction GetCallToReturnFlowFunction(ICFGEdge edge)
         => new CallToReturnFlow(edge, _db);
 
-    public IFlowFunction GetNormalFlowFunction(ICFGEdge edge, TaintFact inFact)
+    public IFlowFunction GetNormalFlowFunction(ICFGEdge edge)
         => new NormalFlow(edge, _db);
 
-    public IFlowFunction GetReturnFlowFunction(ICFGEdge edge, TaintFact exitFact, TaintFact callsiteFact)
-        => new ReturnFlow(edge, exitFact, callsiteFact, _db);
+    public IFlowFunction GetReturnFlowFunction(ICFGEdge edge, ICFGNode callSite)
+        => new ReturnFlow(edge, callSite, _db);
 }
