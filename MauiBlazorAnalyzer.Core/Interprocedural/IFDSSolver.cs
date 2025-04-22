@@ -112,7 +112,6 @@ public class IFDSSolver
         if (_summaryEdges.TryGetValue((calleeEntry, inFactAtCallsite), out var cachedExitFacts))
         {
             // Summary found, propagate results directly to the return site
-
             var callToReturnEdgeTarget = _graph
                 .GetOutgoingEdges(callEdge.From)
                 .FirstOrDefault(e => e.Type == EdgeType.CallToReturn && e.From.Equals(callEdge.From))?.To;
@@ -194,10 +193,4 @@ public class IFDSSolver
         }
     }
 
-    private ISet<TaintFact> MergeSummary(ICFGEdge ctr, ISet<TaintFact> curr)
-    {
-        if (_summaryEdges.TryGetValue((ctr.From, (IFact)curr.FirstOrDefault() ?? _problem.ZeroValue), out var summary))
-            curr.UnionWith(summary);
-        return curr;
-    }
 }

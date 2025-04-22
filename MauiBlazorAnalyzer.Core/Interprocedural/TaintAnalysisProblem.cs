@@ -1,8 +1,5 @@
-﻿using MauiBlazorAnalyzer.Core.Intraprocedural.Context;
-using Microsoft.CodeAnalysis;
-using System.Collections.Frozen;
+﻿using Microsoft.CodeAnalysis;
 using System.Collections.Immutable;
-using System.Linq;
 
 namespace MauiBlazorAnalyzer.Core.Interprocedural;
 public class TaintAnalysisProblem : IFDSTabulationProblem
@@ -41,6 +38,7 @@ public class TaintAnalysisProblem : IFDSTabulationProblem
                     var path = new AccessPath(parameter, ImmutableArray<IFieldSymbol>.Empty);
                     entryFacts.Add(new TaintFact(path));
                 }
+                entryFacts.Remove(_zeroValue); // TODO: Remove this, used for testing
             }
             initialSeeds[node] = entryFacts;
         }

@@ -9,8 +9,10 @@ internal sealed class CallToReturnFlow : BaseFlowFunction
     {
     }
 
-    public override ISet<TaintFact> ComputeTargets(TaintFact inFact)
+    public override ISet<TaintFact> ComputeTargets(TaintFact inFactAtCallSite)
     {
+        if (IsZero(inFactAtCallSite)) return Empty; // Should not be called with ZeroFact
+
         //var assign = Edge.From.Operation as ISimpleAssignmentOperation;
         //if (assign == null) return new HashSet<TaintFact> { inFact };
         //if (!inFact.IsReturnValue) return new HashSet<TaintFact> { inFact };
@@ -26,8 +28,23 @@ internal sealed class CallToReturnFlow : BaseFlowFunction
         //return dstSymbol == null
         //    ? new HashSet<TaintFact> { inFact }
         //    : new HashSet<TaintFact> { inFact, inFact.WithNewBase(dstSymbol) };
+
         var outSet = new HashSet<TaintFact>();
-        outSet.Add(inFact);
+        var returnSiteOp = Edge.To.Operation;
+
+        if (inFactAtCallSite.IsReturnValue || inFactAtCallSite.Path is null)
+        {
+            return Empty; // Non-path facts don't bypass the callee this way.
+        }
+
+        if (returnSiteOp is ISimpleAssignmentOperation assign)
+        {
+            if (inFactAtCallSite.AppliesTo(assign.Target))
+            {
+                outSet.Remove(inFactAtCallSite);
+
+            }
+        }
         return outSet;
     }
 }

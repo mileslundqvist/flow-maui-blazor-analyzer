@@ -87,14 +87,19 @@ public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
         // 1. Exit node: Add return edges to callers
         if (node.Kind == ICFGNodeKind.Exit)
         {
-            foreach (var (callSite, returnNode) in _callers.GetOrAdd(node.MethodContext.MethodSymbol, _ => new()))
+            // Find callers for this method. If none exist yet, GetOrAdd provides an empty list.
+            if (_callers.TryGetValue(node.MethodContext.MethodSymbol, out var callersList))
             {
-                AddEdgeInternal(node, returnNode, EdgeType.Return);
+                foreach (var (callSite, returnNode) in callersList)
+                {
+                    // Add a Return edge from the method's exit node to the call site's return node.
+                    AddEdgeInternal(node, returnNode, EdgeType.Return);
+                }
             }
-            return;
+            return; // No other successors from an Exit node
         }
 
-        // 2. Obtain CFG lazily
+        // 2. Obtain CFG lazily for non-exit nodes
         var cfg = GetCfg(node.MethodContext.MethodSymbol);
         if (cfg is null) return;
 
@@ -122,31 +127,54 @@ public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
 
         if (node.Operation is null) return; // Should not happen for non-entry
 
+        // Find the basic block containing the node's operation
         var block = cfg.Blocks.FirstOrDefault(b => b.Operations.Contains(node.Operation));
         if (block == null) return;
 
+        // Detect Call Site
+        bool isCallSiteNode = node.Kind == ICFGNodeKind.CallSite ||
+                               node.Operation is IInvocationOperation ||
+                               (node.Operation is ISimpleAssignmentOperation assignOp && assignOp.Value is IInvocationOperation) ||
+                               (node.Operation is IExpressionStatementOperation exprOp && (exprOp.Operation is IInvocationOperation || 
+                               (exprOp.Operation is ISimpleAssignmentOperation innerAssignOp && innerAssignOp.Value is IInvocationOperation)));
+
+
         // 4. Intraprocedural successors
-        foreach (var succ in new[] { block.ConditionalSuccessor, block.FallThroughSuccessor })
+        if (!isCallSiteNode)
         {
-            if (succ?.Destination is null) continue;
+            int operationIndex = Array.IndexOf(block.Operations.ToArray(), node.Operation);
 
-            var targetOp = succ?.Destination?.Operations.FirstOrDefault();
-            if (targetOp is not null)
+            // If there is a next operation within the same block, add an edge to it
+            if (operationIndex >= 0 && operationIndex < block.Operations.Length - 1)
             {
-                var succNode = FindOrCreateNode(targetOp, node.MethodContext);
-                AddEdgeInternal(node, succNode, EdgeType.Intraprocedural);
+                var nextOperationInBlock = block.Operations[operationIndex + 1];
+                var nextNode = FindOrCreateNode(nextOperationInBlock, node.MethodContext);
+                AddEdgeInternal(node, nextNode, EdgeType.Intraprocedural);
             }
-
-            // Edge into synthetic exit block
-            if (succ.Destination.Kind == BasicBlockKind.Exit)
+            else
             {
-                var exitNode = FindOrCreateNode(null, node.MethodContext, ICFGNodeKind.Exit);
-                AddEdgeInternal(node, exitNode, EdgeType.Intraprocedural);
+                // If this is the last operation in the block, add edge to successor blocks
+                foreach (var succ in new[] { block.ConditionalSuccessor, block.FallThroughSuccessor })
+                {
+                    if (succ?.Destination is null) continue;
+
+                    var targetOp = succ?.Destination?.Operations.FirstOrDefault();
+                    if (targetOp is not null)
+                    {
+                        var succNode = FindOrCreateNode(targetOp, node.MethodContext);
+                        AddEdgeInternal(node, succNode, EdgeType.Intraprocedural);
+                    }
+
+                    // Edge into synthetic exit block
+                    else if (succ.Destination.Kind == BasicBlockKind.Exit)
+                    {
+                        var exitNode = FindOrCreateNode(null, node.MethodContext, ICFGNodeKind.Exit);
+                        AddEdgeInternal(node, exitNode, EdgeType.Intraprocedural);
+                    }
+                }
             }
-
-
-
         }
+        
 
         // - Call / Call-To-Return
         foreach (var inv in node.Operation.DescendantsAndSelf().OfType<IInvocationOperation>())
@@ -154,11 +182,14 @@ public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
             var callee = inv.TargetMethod;
             if (callee.IsAbstract || callee.IsExtern) continue;
             var calleeEntry = GetOrAddEntryNode(callee);
+
+            // Add a Call edge from the current node (the call site) to the callee's entry node
             AddEdgeInternal(node, calleeEntry, EdgeType.Call);
 
+            // Find the return side node: the program point immediately after the call site
             ICFGNode? returnNode = null;
-
             var ops = block.Operations;
+
             int index = Array.IndexOf(ops.ToArray(), node.Operation);
             if (index >= 0 && index + 1 < ops.Length)
             {
@@ -180,7 +211,11 @@ public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
 
             if (returnNode != null)
             {
+                // Add a CallToReturn edge from the current node (the call site) to the return site node.
                 AddEdgeInternal(node, returnNode, EdgeType.CallToReturn);
+
+                // Record the call site node and its return node for Return edge generation later by the callee's Exit node.
+                // GetOrAdd is used for thread safety, ensuring the list exists.
                 _callers.GetOrAdd(callee, _ => new()).Add((node, returnNode));
             }
         }
@@ -245,9 +280,33 @@ public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
     private ICFGNode FindOrCreateNode(IOperation? operation, MethodAnalysisContext context, ICFGNodeKind kindHint = ICFGNodeKind.Normal)
     {
         ICFGNodeKind kind = kindHint;
-        if (operation is IExpressionStatementOperation) kind = ICFGNodeKind.CallSite;
+
+        if (operation == null)
+        {
+            if (kindHint != ICFGNodeKind.Exit) throw new ArgumentNullException(nameof(operation), "Operation cannot be null for non-Exit nodes.");
+            kind = ICFGNodeKind.Exit;
+        }
+        else
+        {
+            if (operation is IInvocationOperation ||
+                (operation is ISimpleAssignmentOperation assignOp && assignOp.Value is IInvocationOperation) ||
+                (operation is IExpressionStatementOperation exprOp && (exprOp.Operation is IInvocationOperation || 
+                (exprOp.Operation is ISimpleAssignmentOperation innerAssignOp && innerAssignOp.Value is IInvocationOperation))))
+            {
+                kind = ICFGNodeKind.CallSite;
+            }
+            else if (operation is IReturnOperation)
+            {
+
+            }
+            else
+            {
+                kind = ICFGNodeKind.Normal;
+            }
+        }
 
         var candidate = new ICFGNode(operation, context, kind);
+
         return _nodes.Keys.FirstOrDefault(n => n.Equals(candidate)) ?? AddFresh(candidate);
     }
 

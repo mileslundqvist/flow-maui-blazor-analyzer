@@ -1,6 +1,5 @@
 ﻿using MauiBlazorAnalyzer.Core.Interprocedural.DB;
 using MauiBlazorAnalyzer.Core.Interprocedural.FlowFunctions;
-using Microsoft.CodeAnalysis.Operations;
 
 namespace MauiBlazorAnalyzer.Core.Interprocedural;
 public sealed class TaintFlowFunctions : IFlowFunctions
@@ -15,6 +14,7 @@ public sealed class TaintFlowFunctions : IFlowFunctions
 
     public IFlowFunction GetNormalFlowFunction(ICFGEdge edge, TaintFact inFact)
         => new NormalFlow(edge, _db);
+
     public IFlowFunction GetReturnFlowFunction(ICFGEdge edge, TaintFact exitFact, TaintFact callsiteFact)
         => new ReturnFlow(edge, exitFact, callsiteFact, _db);
 }
