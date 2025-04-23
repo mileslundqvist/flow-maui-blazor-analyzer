@@ -130,31 +130,28 @@ public class IFDSSolver
 
             callers.Add(callSiteState);
 
+            var summaryKey = new ExplodedGraphNode(calleeEntryNode, entryFact);
+            if (_summaryEdges.TryGetValue(summaryKey, out var cachedExitFacts))
+            {
+                var callToReturnEdgeTarget = _graph
+                    .GetOutgoingEdges(callEdge.From)
+                    .FirstOrDefault(e => e.Type == EdgeType.CallToReturn && e.From.Equals(callEdge.From))?.To;
+
+                if (callToReturnEdgeTarget != null)
+                {
+                    foreach (var exitFact in cachedExitFacts)
+                    {
+                        var returnFunction = _problem.FlowFunctions.GetReturnFlowFunction(null, callSiteNode);
+                        var returnSiteFacts = returnFunction?.ComputeTargets(exitFact) ?? new HashSet<TaintFact>();
+
+                        foreach (var returnFact in returnSiteFacts)
+                        {
+                            Propagate(new ExplodedGraphNode(callToReturnEdgeTarget, returnFact), new ExplodedGraphNode(callEdge.From, entryFact));
+                        }
+                    }
+                }
+            }
         }
-
-        //TODO: Summary manage, propagate results directly to the return site
-        //if (_summaryEdges.TryGetValue((calleeEntry, inFactAtCallsite), out var cachedExitFacts))
-        //{
-            
-        //    var callToReturnEdgeTarget = _graph
-        //        .GetOutgoingEdges(callEdge.From)
-        //        .FirstOrDefault(e => e.Type == EdgeType.CallToReturn && e.From.Equals(callEdge.From))?.To;
-
-        //    if (callToReturnEdgeTarget != null)
-        //    {
-        //        // Handle summary in a correct way
-        //        //foreach (var exitFact in cachedExitFacts)
-        //        //{
-        //        //    var returnFunction = _problem.FlowFunctions.GetReturnFlowFunction(null, null); // Pass null for edge, ReturnFlow might not need it
-        //        //    var returnSiteFacts = returnFunction?.ComputeTargets(exitFact) ?? new HashSet<TaintFact>();
-
-        //        //    foreach (var returnFact in returnSiteFacts)
-        //        //    {
-        //        //        Propagate(callToReturnEdgeTarget, returnFact, callEdge.From, inFactAtCallsite);
-        //        //    }
-        //        //}
-        //    }
-        //}
 
         return entryFacts;
 
@@ -164,8 +161,8 @@ public class IFDSSolver
     private ISet<TaintFact> HandleReturn(ICFGEdge returnEdge, TaintFact exitFact)
     {
         var outSet = new HashSet<TaintFact>();
-        var exitNode = returnEdge.From;
-        var calleeEntryNode = _graph.GetEntryNode(exitNode);
+        var calleeExitNode = returnEdge.From;
+        var calleeEntryNode = _graph.GetEntryNode(calleeExitNode);
 
         foreach (var entryState in _callContextMap.Keys.Where(k => k.Node.Equals(calleeEntryNode)))
         {
@@ -178,7 +175,7 @@ public class IFDSSolver
             {
                 foreach (var callSiteState in callingStates)
                 {
-                    var callSiteNode = callSiteState.Node;
+                    var (callSiteNode, callSiteFact) = callSiteState;
 
                     // Find the return site node
                     var returnSiteNode = _graph.GetOutgoingEdges(callSiteNode).FirstOrDefault(e => e.Type == EdgeType.CallToReturn);
@@ -190,6 +187,9 @@ public class IFDSSolver
 
                         // Compute targets
                         var returnSiteFacts = returnFlowFunction.ComputeTargets(exitFact);
+
+                        // Add sumary
+                        AddSummary(calleeEntryNode, callSiteFact, returnSiteFacts);
 
                         outSet.UnionWith(returnSiteFacts);
                     }
@@ -228,6 +228,16 @@ public class IFDSSolver
                 _workQueue.Enqueue(key);
             }
         }
+    }
+
+    private void AddSummary(ICFGNode calleeEntry, IFact entryFact, IEnumerable<TaintFact> outFacts)
+    {
+        var key = new ExplodedGraphNode(calleeEntry, entryFact);
+        if (!_summaryEdges.TryGetValue(key, out var set))
+        {
+            _summaryEdges[key] = set = new HashSet<TaintFact>();
+        }
+        set.UnionWith(outFacts);
     }
 
 }
