@@ -1,5 +1,6 @@
 ﻿using MauiBlazorAnalyzer.Core.Analysis;
 using MauiBlazorAnalyzer.Core.Analysis.Interfaces;
+using MauiBlazorAnalyzer.Core.EntryPoints;
 using MauiBlazorAnalyzer.Core.Interprocedural;
 using Microsoft.CodeAnalysis;
 using Microsoft.Extensions.Logging;
@@ -88,15 +89,9 @@ public class AnalysisOrchestrator
     {
         var statistics = new ProjectAnalysisStatistics(0,0);
 
-        // 1. Get initial method analysis contexts Dictionary<IMethodSymbol, MethodAnalysisContext>
-        //var methodAnalysisContexts = await MethodAnalysisContextProvider.GetMethodAnalysisContexts(compilation, cancellationToken);
-
-        // 2. Create call graph Dictionary<IMethodSymbol, HashSet<IMethodSymbol>>
-        //CallGraphBuilder callGraphBuilder = new();
-        //var callGraph = callGraphBuilder.Build(methodAnalysisContexts);
-
         // Creating a small set of nodes to start from for testing
-
+        var analyzer = new BlazorEntryPointAnalyzer(compilation);
+        List<EntryPointInfo> entryPoints = analyzer.FindEntryPoints();
 
         var entryNodes = await EntryNodeBuilder.BuildEntryNodesAsync(compilation, cancellationToken);
         var taintAnalysisProblem = new TaintAnalysisProblem(compilation, entryNodes);
