@@ -75,40 +75,87 @@ public class IFDSSolver
 
                 // -- Non‑zero facts (= TaintFact) --
                 var currentTaintFact = (TaintFact)currentFact;
-                ISet<TaintFact> successorFacts = new HashSet<TaintFact>(); // Initialize empty set
 
                 switch (edge.Type)
                 {
                     case EdgeType.Intraprocedural:
-                        var normalFlow = _problem.FlowFunctions.GetNormalFlowFunction(edge);
-                        successorFacts.UnionWith(normalFlow?.ComputeTargets(currentTaintFact) ?? new HashSet<TaintFact>());
+                        HandleIntraprocedural(edge, currentTaintFact, currentExplodedNode);
                         break;
 
                     case EdgeType.Call:
-                        successorFacts.UnionWith(HandleCall(edge, currentTaintFact, currentExplodedNode));
+                        HandleCall(edge, currentTaintFact, currentExplodedNode);
                         break;
 
                     case EdgeType.Return:
-                        successorFacts.UnionWith(HandleReturn(edge, currentTaintFact));
+                        HandleReturn(edge, currentTaintFact, currentExplodedNode);
                         break;
 
                     case EdgeType.CallToReturn:
-                        var ctrFlow = _problem.FlowFunctions.GetCallToReturnFlowFunction(edge);
-                        successorFacts.UnionWith(ctrFlow?.ComputeTargets(currentTaintFact) ?? new HashSet<TaintFact>());
+                        HandleCallToReturn(edge, currentTaintFact, currentExplodedNode);
                         break;
-                }
-
-                // Propagate the calculated successor facts to the target node (edge.To)
-                foreach (var succesorFact in successorFacts)
-                {
-                    Propagate(new ExplodedGraphNode(targetNode, succesorFact), new ExplodedGraphNode(targetNode, succesorFact));
                 }
             }
         }
     }
 
+    private void Propagate(ExplodedGraphNode targetState, ExplodedGraphNode predecessorState)
+    {
+
+        var (targetNode, targetFact) = targetState;
+
+        // Record taint facts in the user-visible result
+        if (targetFact is TaintFact taintFact)
+        {
+            if (!_analysisResults.TryGetValue(targetNode, out var set))
+                _analysisResults[targetNode] = set = new HashSet<TaintFact>();
+            set.Add(taintFact);
+        }
+
+        // Track all facts (including ZeroFact) in the path-edge graph
+        var key = targetState;
+        if (!_pathEdges.TryGetValue(key, out var preds))
+            _pathEdges[key] = preds = new HashSet<ExplodedGraphNode>();
+
+        // Only add the predecessor if it's new to avoid infinite loops on cycles if not using _inQueue
+        // (though _inQueue handles the worklist part, path edges can still cycle)
+        if (preds.Add(predecessorState))
+        {
+            // If a new path edge is discovered, potentially add target to worklist
+            if (_inQueue.Add(key)) // Check if (targetNode, targetFact) is already in the work queue
+            {
+                _workQueue.Enqueue(key);
+            }
+        }
+    }
+
+
+    private void HandleCallToReturn(ICFGEdge edge, TaintFact currentFact, ExplodedGraphNode currentState)
+    {
+        var normalFlow = _problem.FlowFunctions.GetCallToReturnFlowFunction(edge);
+        var successors = normalFlow?.ComputeTargets(currentFact) ?? Enumerable.Empty<TaintFact>();
+
+        var targetNode = edge.To;
+        foreach (var successorFact in successors)
+        {
+            Propagate(new ExplodedGraphNode(targetNode, successorFact), currentState);
+        }
+    }
+
+    private void HandleIntraprocedural(ICFGEdge edge, TaintFact currentFact, ExplodedGraphNode currentState)
+    {
+        var normalFlow = _problem.FlowFunctions.GetNormalFlowFunction(edge);
+        var successors = normalFlow?.ComputeTargets(currentFact) ?? Enumerable.Empty<TaintFact>();
+        var targetNode = edge.To;
+
+        foreach (var successorFact in successors)
+        {
+            Propagate(new ExplodedGraphNode(targetNode, successorFact), currentState);
+        }
+    }
+
+
     // Call edge handling (non-zero facts)
-    private ISet<TaintFact> HandleCall(ICFGEdge callEdge, TaintFact callSiteFact, ExplodedGraphNode callSiteState)
+    private void HandleCall(ICFGEdge callEdge, TaintFact callSiteFact, ExplodedGraphNode callSiteState)
     {
         var callSiteNode = callEdge.From;
         var calleeEntryNode = _graph.GetEntryNode(callEdge.To);
@@ -118,18 +165,6 @@ public class IFDSSolver
 
         foreach (var entryFact in entryFacts)
         {
-            // Store call context
-            var calleeEntryState = new ExplodedGraphNode(calleeEntryNode, entryFact);
-
-
-            if (!_callContextMap.TryGetValue(calleeEntryState, out var callers))
-            {
-                callers = new HashSet<ExplodedGraphNode>();
-                _callContextMap[calleeEntryState] = callers;
-            }
-
-            callers.Add(callSiteState);
-
             var summaryKey = new ExplodedGraphNode(calleeEntryNode, entryFact);
             if (_summaryEdges.TryGetValue(summaryKey, out var cachedExitFacts))
             {
@@ -146,30 +181,44 @@ public class IFDSSolver
 
                         foreach (var returnFact in returnSiteFacts)
                         {
-                            Propagate(new ExplodedGraphNode(callToReturnEdgeTarget, returnFact), new ExplodedGraphNode(callEdge.From, entryFact));
+                            Propagate(new ExplodedGraphNode(callToReturnEdgeTarget, returnFact), callSiteState);
+                            continue;
                         }
                     }
                 }
+                continue;
             }
+
+            // Store call context
+            var calleeEntryState = new ExplodedGraphNode(calleeEntryNode, entryFact);
+
+            // Propagate fact into calle entry
+            Propagate(calleeEntryState, callSiteState);
+
+            if (!_callContextMap.TryGetValue(calleeEntryState, out var callers))
+            {
+                callers = new HashSet<ExplodedGraphNode>();
+                _callContextMap[calleeEntryState] = callers;
+            }
+
+            callers.Add(callSiteState);
+
+              
         }
-
-        return entryFacts;
-
     }
 
     // Return edge handling (non-zero facts)
-    private ISet<TaintFact> HandleReturn(ICFGEdge returnEdge, TaintFact exitFact)
+    private void HandleReturn(ICFGEdge returnEdge, TaintFact exitFact, ExplodedGraphNode calleeExitState)
     {
-        var outSet = new HashSet<TaintFact>();
         var calleeExitNode = returnEdge.From;
         var calleeEntryNode = _graph.GetEntryNode(calleeExitNode);
+        if (calleeExitNode == null) return;
 
-        foreach (var entryState in _callContextMap.Keys.Where(k => k.Node.Equals(calleeEntryNode)))
+        var relevantEntryStates = _callContextMap.Keys.Where(k => k.Node.Equals(calleeEntryNode));
+
+        foreach (var entryState in relevantEntryStates)
         {
-            // *** TODO: Check if entryState *can* lead to exitState ***
-            // This is the crucial link requiring intra-procedural summary/path info.
-            // bool pathExists = CheckPathExists(entryState, exitState); // Placeholder for summary lookup
-            // if (!pathExists) continue;
+            var entryFact = entryState.Fact;
 
             if (_callContextMap.TryGetValue(entryState, out var callingStates))
             {
@@ -178,7 +227,8 @@ public class IFDSSolver
                     var (callSiteNode, callSiteFact) = callSiteState;
 
                     // Find the return site node
-                    var returnSiteNode = _graph.GetOutgoingEdges(callSiteNode).FirstOrDefault(e => e.Type == EdgeType.CallToReturn);
+                    var callToReturnEdge = _graph.GetOutgoingEdges(callSiteNode).FirstOrDefault(e => e.Type == EdgeType.CallToReturn);
+                    var returnSiteNode = callToReturnEdge?.To;
 
                     if (returnSiteNode != null)
                     {
@@ -188,47 +238,56 @@ public class IFDSSolver
                         // Compute targets
                         var returnSiteFacts = returnFlowFunction.ComputeTargets(exitFact);
 
-                        // Add sumary
-                        AddSummary(calleeEntryNode, callSiteFact, returnSiteFacts);
+                        // Add summary
+                        if (entryFact is TaintFact entryTaintFact)
+                        {
+                            AddSummary(calleeEntryNode, entryTaintFact, returnSiteFacts);
+                        }
 
-                        outSet.UnionWith(returnSiteFacts);
+                        // Propagate results to the return site node
+                        foreach (var returnFact in returnSiteFacts)
+                        {
+                            Propagate(new ExplodedGraphNode(returnSiteNode, returnFact), calleeExitState);
+                        }
                     }
                 }
             }
         }
-
-        return outSet;
     }
 
-    private void Propagate(ExplodedGraphNode targetState, ExplodedGraphNode predecessorState)
-    {
+    //private IEnumerable<ExplodedGraphNode> FindEntryStatesForExitState(ExplodedGraphNode exitState)
+    //{
+    //    var (exitNode, exitFact) = exitState;
+    //    var entryNode = _graph.GetEntryNode(exitNode);
+    //    if (entryNode == null) yield break;
 
-        var (targetNode, targetFact) = targetState;
-        var (predecessorNode, predecessorFact) = predecessorState;
-        // Record taint facts in the user-visible result
-        if (targetFact is TaintFact taintFact)
-        {
-            if (!_analysisResults.TryGetValue(targetNode, out var set))
-                _analysisResults[targetNode] = set = new HashSet<TaintFact>();
-            set.Add(taintFact);
-        }
+    //    var visited = new HashSet<ExplodedGraphNode>();
+    //    var queue = new Queue<ExplodedGraphNode>();
 
-        // Track all facts (including ZeroFact) in the path-edge graph
-        var key = new ExplodedGraphNode(targetNode, targetFact);
-        if (!_pathEdges.TryGetValue(key, out var preds))
-            _pathEdges[key] = preds = new HashSet<ExplodedGraphNode>();
+    //    queue.Enqueue(exitState);
+    //    visited.Add(exitState);
 
-        // Only add the predecessor if it's new to avoid infinite loops on cycles if not using _inQueue
-        // (though _inQueue handles the worklist part, path edges can still cycle)
-        if (preds.Add(new ExplodedGraphNode(predecessorNode, predecessorFact)))
-        {
-            // If a new path edge is discovered, potentially add target to worklist
-            if (_inQueue.Add(key)) // Check if (targetNode, targetFact) is already in the work queue
-            {
-                _workQueue.Enqueue(key);
-            }
-        }
-    }
+    //    while (queue.Count > 0)
+    //    {
+    //        var currentState = queue.Dequeue();
+    //        if (currentState.Node.Equals(entryNode))
+    //        {
+    //            yield return currentState;
+    //            continue;
+    //        }
+
+    //        if (_pathEdges.TryGetValue(currentState, out var predecessrs))
+    //        {
+    //            foreach (var predecessorState in predecessrs)
+    //            {
+    //                if (predecessorState.Node.MethodContext.Equals(exitNode.MethodContext) && visited.Add(predecessorState))
+    //                {
+    //                    queue.Enqueue(predecessorState);
+    //                }
+    //            }
+    //        }
+    //    }
+    //}
 
     private void AddSummary(ICFGNode calleeEntry, IFact entryFact, IEnumerable<TaintFact> outFacts)
     {
