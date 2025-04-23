@@ -37,13 +37,15 @@ internal sealed class ReturnFlow : BaseFlowFunction
                 // Create a new fact rooted at the assignment target.
                 outSet.Add(new TaintFact(new AccessPath(destinationSymbol, ImmutableArray<IFieldSymbol>.Empty)));
             }
-            outSet.Add(inFact);
+            //outSet.Add(inFact); Should not add the exit fact to propogate back into the caller as this will not have
+            // relevance inside the caller
         }
         else
         {
-            outSet.Add(inFact);
+            //outSet.Add(inFact); Should not add the exit fact to propogate back into the caller as this will not have
+            // relevance inside the caller
         }
-        
+
 
         // Case 2: Handling facts related to parameters or fields modified within the callee
 

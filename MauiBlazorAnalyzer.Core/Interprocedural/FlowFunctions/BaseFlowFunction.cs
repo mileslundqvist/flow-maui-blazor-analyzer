@@ -14,6 +14,5 @@ internal abstract class BaseFlowFunction : IFlowFunction
 
     protected bool IsZero(IFact fact) => fact is ZeroFact;
     protected static ISet<TaintFact> Empty => new HashSet<TaintFact>();
-
     public abstract ISet<TaintFact> ComputeTargets(TaintFact inFact);
 }
