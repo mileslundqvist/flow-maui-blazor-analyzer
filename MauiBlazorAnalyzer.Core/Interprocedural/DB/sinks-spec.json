@@ -1,0 +1,6 @@
+{
+  "data": [
+    "System.IO.File.WriteAllText(System.String, System.String)",
+    "System.IO.File.WriteAllTextAsync(System.String, System.String, System.Threading.CancellationToken)"
+  ]
+}
