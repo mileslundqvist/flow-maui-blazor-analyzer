@@ -2,8 +2,21 @@
 using System.Text.Json;
 
 namespace MauiBlazorAnalyzer.Core.Interprocedural.DB;
-internal sealed class TaintSpecDB
+public sealed class TaintSpecDB
 {
+    private static readonly SymbolDisplayFormat SinkComparisonFormat = new SymbolDisplayFormat(
+    typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypesAndNamespaces,
+    genericsOptions: SymbolDisplayGenericsOptions.IncludeTypeParameters,
+    memberOptions:
+        SymbolDisplayMemberOptions.IncludeContainingType |
+        SymbolDisplayMemberOptions.IncludeParameters,
+    parameterOptions:
+        SymbolDisplayParameterOptions.IncludeType |
+        SymbolDisplayParameterOptions.IncludeParamsRefOut, 
+    miscellaneousOptions:
+        SymbolDisplayMiscellaneousOptions.EscapeKeywordIdentifiers
+);
+
     internal class TaintSpecFileContent
     {
         public List<string>? Data { get; set; }
@@ -12,7 +25,21 @@ internal sealed class TaintSpecDB
     public static TaintSpecDB Instance { get; } = new();
 
     public bool IsSource(IMethodSymbol m) => m != null && _sources.Contains(m.OriginalDefinition.ToDisplayString());
-    public bool IsSink(IMethodSymbol m) => m != null && _sinks.Contains(m.OriginalDefinition.ToDisplayString());
+    public bool IsSink(IMethodSymbol m)
+    {
+        if (m == null) return false;
+
+        IMethodSymbol originalDefinition = m.OriginalDefinition;
+
+        string methodSignature = originalDefinition.ToDisplayString(SinkComparisonFormat);
+
+        if (_sinks.Contains(methodSignature))
+        {
+            return true;
+        }
+
+        return false;
+    } 
     public bool IsSanitizer(IMethodSymbol m) => m != null && _sanitizers.Contains(m.OriginalDefinition.ToDisplayString());
 
     private readonly HashSet<string> _sources = new(StringComparer.Ordinal);

@@ -14,7 +14,7 @@ public class IFDSSolver
     private readonly Dictionary<ExplodedGraphNode, HashSet<TaintFact>> _summaryEdges = new();
 
     // analysis result map: node -> facts that reach it (excluding ZeroFact)
-    private readonly Dictionary<ICFGNode, HashSet<TaintFact>> _analysisResults = new();
+    private readonly Dictionary<ICFGNode, HashSet<TaintFact>> _results = new();
 
 
     // Maps: (calleeEntryNode, entryFact) -> Set of (callSiteNode, callSiteFact) that caused it
@@ -29,17 +29,17 @@ public class IFDSSolver
         _graph = problem.Graph;
     }
 
-    public IReadOnlyDictionary<ICFGNode, ISet<TaintFact>> Solve()
+    public IFDSAnalysisResult Solve()
     {
         Initialize();
         ProcessWorklist();
-        return _analysisResults.ToDictionary(kvp => kvp.Key, kvp => (ISet<TaintFact>)kvp.Value);
+        return new IFDSAnalysisResult(_results, _pathEdges);
     }
 
     // Seeding
     private void Initialize()
     {
-        _analysisResults.Clear();
+        _results.Clear();
         _workQueue.Clear();
         _inQueue.Clear();
         _pathEdges.Clear();
@@ -106,8 +106,8 @@ public class IFDSSolver
         // Record taint facts in the user-visible result
         if (targetFact is TaintFact taintFact)
         {
-            if (!_analysisResults.TryGetValue(targetNode, out var set))
-                _analysisResults[targetNode] = set = new HashSet<TaintFact>();
+            if (!_results.TryGetValue(targetNode, out var set))
+                _results[targetNode] = set = new HashSet<TaintFact>();
             set.Add(taintFact);
         }
 

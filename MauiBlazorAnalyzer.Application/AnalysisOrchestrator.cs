@@ -104,6 +104,14 @@ public class AnalysisOrchestrator
         var solver = new IFDSSolver(taintAnalysisProblem);
         var result = solver.Solve();
 
+        var reporter = new TaintDiagnosticReporter(result, taintAnalysisProblem.Graph);
+
+        foreach (AnalysisDiagnostic d in reporter.ToDiagnostics())
+        {
+            Console.WriteLine($"{d.Severity}: {d.Message} @ {d.FilePath}:{d.Location.StartLinePosition.Line + 1}");
+        }
+
+        reporter.WriteConsoleReport(Console.Out);
 
         return new ProjectAnalysisResult([], statistics);
     }
