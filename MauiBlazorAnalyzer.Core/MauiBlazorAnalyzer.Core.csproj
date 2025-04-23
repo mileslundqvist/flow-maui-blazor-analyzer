@@ -14,8 +14,6 @@
 
   <ItemGroup>
     <Folder Include="Analysis\Taint\" />
-    <Folder Include="IFDS\" />
-    <Folder Include="Configuration\" />
   </ItemGroup>
 
   <ItemGroup>
