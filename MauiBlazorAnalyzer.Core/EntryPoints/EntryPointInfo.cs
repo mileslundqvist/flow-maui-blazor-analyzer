@@ -36,7 +36,7 @@ public enum EntryPointType
     /// A property setter invoked implicitly via data binding (@bind).
     /// Taint Source: Value assigned to the property from the UI element.
     /// </summary>
-    BindingSetter // Note: Harder to detect reliably without deeper analysis
+    BindingSetter
 }
 
 /// <summary>

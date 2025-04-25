@@ -1,4 +1,5 @@
-﻿using Microsoft.CodeAnalysis;
+﻿using MauiBlazorAnalyzer.Core.EntryPoints;
+using Microsoft.CodeAnalysis;
 using System.Collections.Immutable;
 
 namespace MauiBlazorAnalyzer.Core.Interprocedural;
@@ -14,33 +15,105 @@ public class TaintAnalysisProblem : IFDSTabulationProblem
     public ZeroFact ZeroValue => _zeroValue;
 
 
-    public TaintAnalysisProblem(Compilation compilation, IEnumerable<ICFGNode> roots)
+    public TaintAnalysisProblem(Compilation compilation, IEnumerable<EntryPointInfo> entryPoints)
     {
-        _graph = new InterproceduralCFG(compilation, roots);
+        ArgumentNullException.ThrowIfNull(compilation);
+        ArgumentNullException.ThrowIfNull(entryPoints);
+
+        var rootMethodSymbols = new HashSet<IMethodSymbol>(SymbolEqualityComparer.Default);
+
+        foreach (var entryPoint in entryPoints)
+        {
+            if (entryPoint.EntryPointSymbol is IMethodSymbol methodSymbol)
+            {
+                rootMethodSymbols.Add(methodSymbol);
+            } else if (entryPoint.EntryPointSymbol is IFieldSymbol fieldSymbol)
+            {
+                if (fieldSymbol.ContainingSymbol is IMethodSymbol containingMethod)
+                {
+                    rootMethodSymbols.Add(containingMethod);
+                }
+            }
+        }
+
+        // Create the ICFG using the identified root methods
+        _graph = new InterproceduralCFG(compilation, rootMethodSymbols);
+
+        // Set up flow functions
         _flowFunctions = new TaintFlowFunctions();
-        InitialSeeds = ComputeInitialSeeds(_graph);
+
+        // Compute initial seeds based on EntryPointInfo and the created graph
+        InitialSeeds = ComputeInitialSeeds(entryPoints, _graph);
     }
 
-    private IReadOnlyDictionary<ICFGNode, ISet<IFact>> ComputeInitialSeeds(InterproceduralCFG graph)
+    private IReadOnlyDictionary<ICFGNode, ISet<IFact>> ComputeInitialSeeds(
+        IEnumerable<EntryPointInfo> entryPoints,
+        InterproceduralCFG graph
+        )
     {
         var initialSeeds = new Dictionary<ICFGNode, ISet<IFact>>();
 
-        foreach (var node in _graph.EntryNodes)
+        foreach (var entryPoint in entryPoints)
         {
-            var entryFacts = new HashSet<IFact> { _zeroValue };
+            IMethodSymbol? targetMethodSymbol = entryPoint.EntryPointSymbol as IMethodSymbol;
 
-            var method = node.MethodContext.MethodSymbol;
-            if (method.GetAttributes()
-                .Any(a => a.AttributeClass?.ToDisplayString() == "Microsoft.JSInterop.JSInvokableAttribute"))
+            if (targetMethodSymbol == null && entryPoint.EntryPointSymbol is IFieldSymbol fieldSymbol)
             {
-                foreach (var parameter in method.Parameters)
-                {
-                    var path = new AccessPath(parameter, ImmutableArray<IFieldSymbol>.Empty);
-                    entryFacts.Add(new TaintFact(path));
-                }
-                entryFacts.Remove(_zeroValue); // TODO: Remove this, used for testing
+                targetMethodSymbol = fieldSymbol.ContainingSymbol as IMethodSymbol;
             }
-            initialSeeds[node] = entryFacts;
+
+            if (targetMethodSymbol == null)
+                continue;
+
+            if (!graph.TryGetEntryNode(targetMethodSymbol, out var entryNode))
+            {
+                continue;
+            }
+
+            // Ensure the node has an entry in the dictionary
+            if (!initialSeeds.TryGetValue(entryNode, out var entryFacts))
+            {
+                entryFacts = new HashSet<IFact> { _zeroValue };
+                initialSeeds[entryNode] = entryFacts;
+            }
+
+            switch (entryPoint.Type)
+            {
+                case EntryPointType.JSInvokableMethod:
+                    if (entryPoint.MethodSymbol != null)
+                    {
+                        foreach (var parameter in entryPoint.TaintedParameters)
+                        {
+                            if (SymbolEqualityComparer.Default.Equals(parameter.ContainingSymbol, entryPoint.MethodSymbol))
+                            {
+                                var path = new AccessPath(parameter, ImmutableArray<IFieldSymbol>.Empty);
+                                var fact = new TaintFact(path);
+                                if (entryFacts.Add(fact))
+                                {
+
+                                }
+                            }
+                        }
+                    }
+                    break;
+                case EntryPointType.ParameterSetter:
+                case EntryPointType.LifecycleMethod:
+                case EntryPointType.EventHandlerMethod:
+                case EntryPointType.BindingSetter:
+                    break; 
+
+                default:
+                    Console.Error.WriteLine($"Warning: Unhandled EntryPointType '{entryPoint.Type}' during initial seed computation.");
+                    break;
+            }
+        }
+
+        foreach (var node in graph.EntryNodes)
+        {
+            if (!initialSeeds.ContainsKey(node))
+            {
+                initialSeeds[node] = new HashSet<IFact> { _zeroValue };
+            }
         }
 
         return initialSeeds;

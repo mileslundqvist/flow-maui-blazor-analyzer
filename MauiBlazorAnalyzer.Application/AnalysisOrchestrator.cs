@@ -93,8 +93,7 @@ public class AnalysisOrchestrator
         var analyzer = new BlazorEntryPointAnalyzer(compilation);
         List<EntryPointInfo> entryPoints = analyzer.FindEntryPoints();
 
-        var entryNodes = await EntryNodeBuilder.BuildEntryNodesAsync(compilation, cancellationToken);
-        var taintAnalysisProblem = new TaintAnalysisProblem(compilation, entryNodes);
+        var taintAnalysisProblem = new TaintAnalysisProblem(compilation, entryPoints);
 
         var solver = new IFDSSolver(taintAnalysisProblem);
         var result = solver.Solve();

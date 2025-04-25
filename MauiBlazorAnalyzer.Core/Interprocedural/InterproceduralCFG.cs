@@ -3,6 +3,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.FlowAnalysis;
 using Microsoft.CodeAnalysis.Operations;
 using System.Collections.Concurrent;
+using System.Diagnostics.CodeAnalysis;
 
 namespace MauiBlazorAnalyzer.Core.Interprocedural;
 public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
@@ -26,19 +27,25 @@ public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
     private readonly ConcurrentDictionary<IMethodSymbol, MethodAnalysisContext> _methodContextCache = new(SymbolEqualityComparer.Default);
 
 
-    public InterproceduralCFG(Compilation compilation, IEnumerable<ICFGNode> initialEntryNodes)
+    public InterproceduralCFG(Compilation compilation, IEnumerable<IMethodSymbol> initialMethodSymbols)
     {
         _compilation = compilation ?? throw new ArgumentNullException(nameof(compilation));
+        var entryNodesList = new List<ICFGNode>();
 
-        var list = new List<ICFGNode>();
-        foreach (var entry in initialEntryNodes)
+        ArgumentNullException.ThrowIfNull(initialMethodSymbols);
+
+        
+        foreach (var methodSymbol in initialMethodSymbols)
         {
-            AddNodeInternal(entry);
-            list.Add(entry);
-            _entryMap.TryAdd(entry.MethodContext.MethodSymbol, entry);
-            _methodContextCache.TryAdd(entry.MethodContext.MethodSymbol, entry.MethodContext);
+            var entryNode = GetOrAddEntryNode(methodSymbol);
+            entryNodesList.Add(entryNode);
+
+            //AddNodeInternal(entry);
+            //list.Add(entry);
+            //_entryMap.TryAdd(entry.MethodContext.MethodSymbol, entry);
+            //_methodContextCache.TryAdd(entry.MethodContext.MethodSymbol, entry.MethodContext);
         }
-        EntryNodes = list;
+        EntryNodes = entryNodesList.AsReadOnly();
     }
 
     // -- Public API --
@@ -49,6 +56,13 @@ public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
     {
         EnsureSuccessorsComputed(node);
         return _successors.TryGetValue(node, out var edges) ? edges : Enumerable.Empty<ICFGEdge>();
+    }
+
+    public bool TryGetEntryNode(IMethodSymbol methodSymbol, [NotNullWhen(true)] out ICFGNode? entryNode)
+    {
+        ArgumentNullException.ThrowIfNull(methodSymbol);
+        // Directly access the internal cache where entry nodes are stored by method symbol
+        return _entryMap.TryGetValue(methodSymbol, out entryNode);
     }
 
     public IEnumerable<ICFGEdge> GetIncomingEdges(ICFGNode node)
@@ -223,7 +237,7 @@ public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
 
     // -- Helper methods --
     private MethodAnalysisContext GetOrAddContext(IMethodSymbol m)
-        => _methodContextCache.GetOrAdd(m, ms => new MethodAnalysisContext(ms));
+        => _methodContextCache.GetOrAdd(m, sym => new MethodAnalysisContext(sym));
 
     private void AddNodeInternal(ICFGNode node)
     {
@@ -338,11 +352,14 @@ public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
 
     private ICFGNode GetOrAddEntryNode(IMethodSymbol m)
     {
+        ArgumentNullException.ThrowIfNull(m);
+
         if (_entryMap.TryGetValue(m, out var node)) return node;
+
         var context = GetOrAddContext(m);
         var entry = new ICFGNode(null, context, ICFGNodeKind.Entry);
         AddNodeInternal(entry);
-        _entryMap[m] = entry;
+        _entryMap.TryAdd(m, entry);
         return entry;
     }
 
