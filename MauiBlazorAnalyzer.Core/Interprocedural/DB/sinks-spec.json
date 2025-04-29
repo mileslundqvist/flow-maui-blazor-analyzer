@@ -20,6 +20,7 @@
     "Microsoft.Maui.Storage.Preferences.Set(System.String, System.Boolean)",
     "Microsoft.Maui.Storage.Preferences.Set(System.String, System.Double)",
     "Microsoft.Maui.Storage.IPreferences.Set(System.String, System.String)",
+    "Microsoft.Maui.Storage.IPreferences.Set<T>(System.String, T, System.String)",
     "Microsoft.Maui.Storage.SecureStorage.SetAsync(System.String, System.String)",
     "Microsoft.Maui.Storage.ISecureStorage.SetAsync(System.String, System.String)",
     "Microsoft.Maui.ApplicationModel.Launcher.OpenAsync(System.String)",

@@ -41,6 +41,7 @@ public sealed class TaintDiagnosticReporter
                 if (!_db.IsSink(inv.TargetMethod))
                     continue;
 
+                // We need to check if any of the parameters are tainted.
                 for (int i = 0; i < inv.Arguments.Length; ++i)
                 {
                     var arg = inv.Arguments[i];

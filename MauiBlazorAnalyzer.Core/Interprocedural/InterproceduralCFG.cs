@@ -1,5 +1,6 @@
 ﻿using MauiBlazorAnalyzer.Core.Intraprocedural.Context;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.FindSymbols;
 using Microsoft.CodeAnalysis.FlowAnalysis;
 using Microsoft.CodeAnalysis.Operations;
 using System.Collections.Concurrent;
@@ -96,7 +97,7 @@ public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
         _successorsComputed.GetOrAdd(node, node => { ComputeSuccessors(node); return true; });
     }
 
-    private void ComputeSuccessors(ICFGNode node)
+    private async void ComputeSuccessors(ICFGNode node)
     {
         // 1. Exit node: Add return edges to callers
         if (node.Kind == ICFGNodeKind.Exit)
@@ -193,9 +194,39 @@ public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
         // - Call / Call-To-Return
         foreach (var inv in node.Operation.DescendantsAndSelf().OfType<IInvocationOperation>())
         {
-            var callee = inv.TargetMethod;
-            if (callee.IsAbstract || callee.IsExtern) continue;
-            var calleeEntry = GetOrAddEntryNode(callee);
+            var targetMethod = inv.TargetMethod;
+            if (targetMethod is null) continue;
+
+            IEnumerable<IMethodSymbol> potentialCallees;
+
+
+            // If the method is abstract, virtual, or an interface method, we need to handle it differently
+            if (targetMethod.IsAbstract || targetMethod.IsVirtual || targetMethod.ContainingType.TypeKind == TypeKind.Interface)
+            {
+                potentialCallees = await FindImplementationsAsync(targetMethod);
+            }
+            else if (!targetMethod.IsExtern)
+            {
+                // Handle direct non-extern calls
+                potentialCallees = new[] { targetMethod };
+            }
+            else
+            {
+                potentialCallees = Enumerable.Empty<IMethodSymbol>();
+            }
+
+
+
+
+
+
+
+                var calleeEntry = GetOrAddEntryNode(targetMethod);
+
+
+
+
+
 
             // Add a Call edge from the current node (the call site) to the callee's entry node
             AddEdgeInternal(node, calleeEntry, EdgeType.Call);
@@ -230,7 +261,7 @@ public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
 
                 // Record the call site node and its return node for Return edge generation later by the callee's Exit node.
                 // GetOrAdd is used for thread safety, ensuring the list exists.
-                _callers.GetOrAdd(callee, _ => new()).Add((node, returnNode));
+                _callers.GetOrAdd(targetMethod, _ => new()).Add((node, returnNode));
             }
         }
     }
@@ -363,4 +394,49 @@ public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
         return entry;
     }
 
+    private async Task<IEnumerable<IMethodSymbol>> FindImplementationsAsync(IMethodSymbol methodSymbol)
+    {
+        IMethodSymbol baseMethod = methodSymbol.OriginalDefinition;
+        var implementations = new List<IMethodSymbol>();
+
+        if (baseMethod.ContainingType.TypeKind == TypeKind.Interface)
+        {
+            try
+            {
+                // TODO: Get real solution
+                var implementingTypes = await SymbolFinder.FindImplementationsAsync(baseMethod.ContainingType, solution: null);
+                foreach (var typeSymbol in implementingTypes)
+                {
+                    var member = typeSymbol.FindImplementationForInterfaceMember(baseMethod);
+                    if (member is IMethodSymbol implementingMethod && !implementingMethod.IsAbstract)
+                    {
+                        implementations.Add(implementingMethod);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Error finding interface implementations for {baseMethod.ContainingType.Name}: {ex.Message}");
+            }
+        }
+        else
+        {
+            // Virtual or Abstract method in a class
+            try
+            {
+                var overridingMethods = await SymbolFinder.FindOverridesAsync(baseMethod, solution: null, null, CancellationToken.None);
+                implementations.AddRange(overridingMethods.OfType<IMethodSymbol>().Where(m => !m.IsAbstract));
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"Error finding overrides for {baseMethod.Name}: {ex.Message}");
+            }
+
+            if (baseMethod.IsVirtual && !baseMethod.IsAbstract)
+            {
+                implementations.Add(baseMethod);
+            }
+        }
+        return implementations.Distinct(SymbolEqualityComparer.Default).Cast<IMethodSymbol>();
+    }
 }
