@@ -1,5 +1,6 @@
 ﻿using MauiBlazorAnalyzer.Core.Analysis.Interfaces;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.MSBuild;
 using Microsoft.Extensions.Logging;
 using System.Collections.Immutable;
@@ -59,7 +60,7 @@ public class ProjectLoader : IProjectLoader
                 continue;
             }
 
-            if (!project.Name.Contains("android", StringComparison.OrdinalIgnoreCase))
+            if (!IsAndroidBuild(project))
             {
                 continue;
             }
@@ -98,6 +99,10 @@ public class ProjectLoader : IProjectLoader
             return null;
         }
     }
+
+    private static bool IsAndroidBuild(Project project)
+        => project.ParseOptions is CSharpParseOptions cpo &&
+        cpo.PreprocessorSymbolNames.Any(s => s.Equals("ANDROID", StringComparison.OrdinalIgnoreCase));
 
     private MSBuildWorkspace CreateMsBuildWorkspace()
     {
