@@ -29,10 +29,10 @@ public class IFDSSolver
         _graph = problem.Graph;
     }
 
-    public IFDSAnalysisResult Solve()
+    public async Task<IFDSAnalysisResult> Solve()
     {
         Initialize();
-        ProcessWorklist();
+        await ProcessWorklist();
         return new IFDSAnalysisResult(_results, _pathEdges);
     }
 
@@ -55,7 +55,7 @@ public class IFDSSolver
         }
     }
 
-    private void ProcessWorklist()
+    private async Task ProcessWorklist()
     {
         while (_workQueue.Count > 0)
         {
@@ -63,8 +63,9 @@ public class IFDSSolver
             _inQueue.Remove(currentExplodedNode);
             var (currentNode, currentFact) = currentExplodedNode; // Deconstruct
 
-            foreach (var edge in _graph.GetOutgoingEdges(currentNode))
+            foreach (var edge in await _graph.GetOutgoingEdges(currentNode))
             {
+
                 var targetNode = edge.To;
                 // -- ZeroFact Handling --
                 if (currentFact.Equals(_problem.ZeroValue))
@@ -155,7 +156,7 @@ public class IFDSSolver
 
 
     // Call edge handling (non-zero facts)
-    private void HandleCall(ICFGEdge callEdge, TaintFact callSiteFact, ExplodedGraphNode callSiteState)
+    private async Task HandleCall(ICFGEdge callEdge, TaintFact callSiteFact, ExplodedGraphNode callSiteState)
     {
         var callSiteNode = callEdge.From;
         var calleeEntryNode = _graph.GetEntryNode(callEdge.To);
@@ -170,6 +171,7 @@ public class IFDSSolver
             {
                 var callToReturnEdgeTarget = _graph
                     .GetOutgoingEdges(callEdge.From)
+                    .Result
                     .FirstOrDefault(e => e.Type == EdgeType.CallToReturn && e.From.Equals(callEdge.From))?.To;
 
                 if (callToReturnEdgeTarget != null)
@@ -227,7 +229,7 @@ public class IFDSSolver
                     var (callSiteNode, callSiteFact) = callSiteState;
 
                     // Find the return site node
-                    var callToReturnEdge = _graph.GetOutgoingEdges(callSiteNode).FirstOrDefault(e => e.Type == EdgeType.CallToReturn);
+                    var callToReturnEdge = _graph.GetOutgoingEdges(callSiteNode).Result.FirstOrDefault(e => e.Type == EdgeType.CallToReturn);
                     var returnSiteNode = callToReturnEdge?.To;
 
                     if (returnSiteNode != null)

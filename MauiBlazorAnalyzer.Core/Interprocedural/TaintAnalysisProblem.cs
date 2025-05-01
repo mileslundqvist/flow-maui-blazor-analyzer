@@ -15,8 +15,9 @@ public class TaintAnalysisProblem : IFDSTabulationProblem
     public ZeroFact ZeroValue => _zeroValue;
 
 
-    public TaintAnalysisProblem(Compilation compilation, IEnumerable<EntryPointInfo> entryPoints)
+    public TaintAnalysisProblem(Project project, Compilation compilation, IEnumerable<EntryPointInfo> entryPoints)
     {
+        ArgumentNullException.ThrowIfNull(project, nameof(project));
         ArgumentNullException.ThrowIfNull(compilation);
         ArgumentNullException.ThrowIfNull(entryPoints);
 
@@ -27,7 +28,8 @@ public class TaintAnalysisProblem : IFDSTabulationProblem
             if (entryPoint.EntryPointSymbol is IMethodSymbol methodSymbol)
             {
                 rootMethodSymbols.Add(methodSymbol);
-            } else if (entryPoint.EntryPointSymbol is IFieldSymbol fieldSymbol)
+            } 
+            else if (entryPoint.EntryPointSymbol is IFieldSymbol fieldSymbol)
             {
                 if (fieldSymbol.ContainingSymbol is IMethodSymbol containingMethod)
                 {
@@ -37,7 +39,7 @@ public class TaintAnalysisProblem : IFDSTabulationProblem
         }
 
         // Create the ICFG using the identified root methods
-        _graph = new InterproceduralCFG(compilation, rootMethodSymbols);
+        _graph = new InterproceduralCFG(project, compilation, rootMethodSymbols);
 
         // Set up flow functions
         _flowFunctions = new TaintFlowFunctions();

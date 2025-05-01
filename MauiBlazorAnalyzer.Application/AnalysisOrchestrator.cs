@@ -88,15 +88,14 @@ public class AnalysisOrchestrator
     private async Task<ProjectAnalysisResult> AnalyzeProjectAsync(Project project, Compilation compilation, CancellationToken cancellationToken)
     {
         var statistics = new ProjectAnalysisStatistics(0,0);
-
+        
         // Creating a small set of nodes to start from for testing
         var analyzer = new BlazorEntryPointAnalyzer(compilation);
         List<EntryPointInfo> entryPoints = analyzer.FindEntryPoints();
-
-        var taintAnalysisProblem = new TaintAnalysisProblem(compilation, entryPoints);
+        var taintAnalysisProblem = new TaintAnalysisProblem(project, compilation, entryPoints.Where(e => e.MethodSymbol.ToDisplayString().Contains("SaveCredentials")));
 
         var solver = new IFDSSolver(taintAnalysisProblem);
-        var result = solver.Solve();
+        var result = await solver.Solve();
 
         var reporter = new TaintDiagnosticReporter(result, taintAnalysisProblem.Graph);
 

@@ -5,17 +5,19 @@ using Microsoft.CodeAnalysis.FlowAnalysis;
 using Microsoft.CodeAnalysis.Operations;
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
+using System.Threading.Tasks;
 
 namespace MauiBlazorAnalyzer.Core.Interprocedural;
 public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
 {
     private readonly Compilation _compilation;
+    private readonly Project _project;
 
     // -- Core Storage --
     private readonly ConcurrentDictionary<ICFGNode, List<ICFGEdge>> _successors = new();
     private readonly ConcurrentDictionary<ICFGNode, List<ICFGEdge>> _predecessors = new();
     private readonly ConcurrentDictionary<ICFGNode, bool> _nodes = new();
-    private readonly ConcurrentDictionary<ICFGNode, bool> _successorsComputed = new();
+    private readonly ConcurrentDictionary<ICFGNode, Lazy<Task>> _successorsComputedTasks = new();
 
     // Entry point(s)
     public IReadOnlyCollection<ICFGNode> EntryNodes { get; }
@@ -28,9 +30,10 @@ public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
     private readonly ConcurrentDictionary<IMethodSymbol, MethodAnalysisContext> _methodContextCache = new(SymbolEqualityComparer.Default);
 
 
-    public InterproceduralCFG(Compilation compilation, IEnumerable<IMethodSymbol> initialMethodSymbols)
+    public InterproceduralCFG(Project project, Compilation compilation, IEnumerable<IMethodSymbol> initialMethodSymbols)
     {
         _compilation = compilation ?? throw new ArgumentNullException(nameof(compilation));
+        _project = project ?? throw new ArgumentNullException(nameof(project));
         var entryNodesList = new List<ICFGNode>();
 
         ArgumentNullException.ThrowIfNull(initialMethodSymbols);
@@ -53,9 +56,9 @@ public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
 
     public IEnumerable<ICFGNode> Nodes => _nodes.Keys;
 
-    public IEnumerable<ICFGEdge> GetOutgoingEdges(ICFGNode node)
+    public async Task<IEnumerable<ICFGEdge>> GetOutgoingEdges(ICFGNode node)
     {
-        EnsureSuccessorsComputed(node);
+        await EnsureSuccessorsComputed(node);
         return _successors.TryGetValue(node, out var edges) ? edges : Enumerable.Empty<ICFGEdge>();
     }
 
@@ -92,12 +95,27 @@ public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
 
     // -- Core Demand-Driven successor exapansion --
 
-    private void EnsureSuccessorsComputed(ICFGNode node)
+    private async Task EnsureSuccessorsComputed(ICFGNode node)
     {
-        _successorsComputed.GetOrAdd(node, node => { ComputeSuccessors(node); return true; });
+        var lazyTask = _successorsComputedTasks.GetOrAdd(node,
+            (key) => new Lazy<Task>(() => ComputeSuccessors(key))
+        );
+
+        try
+        {
+            await lazyTask.Value;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error computing successors for {node}: {ex}");
+            // Potentially mark node as failed? Remove from cache?
+            _successorsComputedTasks.TryRemove(node, out _); // Example: Allow retry on next call
+                                                             // Re-throw or handle as appropriate for your analyzer's overall error strategy
+            throw;
+        }
     }
 
-    private async void ComputeSuccessors(ICFGNode node)
+    private async Task ComputeSuccessors(ICFGNode node)
     {
         // 1. Exit node: Add return edges to callers
         if (node.Kind == ICFGNodeKind.Exit)
@@ -115,9 +133,14 @@ public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
         }
 
         // 2. Obtain CFG lazily for non-exit nodes
-        var cfg = GetCfg(node.MethodContext.MethodSymbol);
-        if (cfg is null) return;
+        ControlFlowGraph? cfg = GetCfg(node.MethodContext.MethodSymbol);
+        if (cfg is null)
+        {
+            _successors.TryAdd(node, new List<ICFGEdge>());
+            return;
+        }
 
+        // Ensure successor list exists for this node
         _successors.TryAdd(node, new List<ICFGEdge>());
 
         // 3. Entry node -> first real operation
@@ -140,128 +163,98 @@ public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
             return;
         }
 
-        if (node.Operation is null) return; // Should not happen for non-entry
+        // Should not happen for non-entry
+        if (node.Operation is null) return;
 
         // Find the basic block containing the node's operation
-        var block = cfg.Blocks.FirstOrDefault(b => b.Operations.Contains(node.Operation));
-        if (block == null) return;
+        BasicBlock? block = cfg.Blocks.FirstOrDefault(b => b.Operations.Contains(node.Operation));
+        if (block is null) return;
 
-        // Detect Call Site
-        bool isCallSiteNode = node.Kind == ICFGNodeKind.CallSite ||
-                               node.Operation is IInvocationOperation ||
-                               (node.Operation is ISimpleAssignmentOperation assignOp && assignOp.Value is IInvocationOperation) ||
-                               (node.Operation is IExpressionStatementOperation exprOp && (exprOp.Operation is IInvocationOperation || 
-                               (exprOp.Operation is ISimpleAssignmentOperation innerAssignOp && innerAssignOp.Value is IInvocationOperation)));
+        // --- Determine Successors ---
+        var invocations = node.Operation.DescendantsAndSelf().OfType<IInvocationOperation>().ToList();
+        // Check if this node's primary operation is a call site or contains calls
+        bool isOrContainsCall = invocations.Any();
 
+        // Calculate the return site node
+        ICFGNode? nextNodeAfterCurrentOp = CalculateReturnSiteNode(block, node);
 
-        // 4. Intraprocedural successors
-        if (!isCallSiteNode)
+        if (isOrContainsCall)
         {
-            int operationIndex = Array.IndexOf(block.Operations.ToArray(), node.Operation);
+            // --- Handle node as a Call Site ---
 
-            // If there is a next operation within the same block, add an edge to it
-            if (operationIndex >= 0 && operationIndex < block.Operations.Length - 1)
+            // Add the CallToReturn edge regardless of whether implementations are found
+            if (nextNodeAfterCurrentOp is not null)
             {
-                var nextOperationInBlock = block.Operations[operationIndex + 1];
-                var nextNode = FindOrCreateNode(nextOperationInBlock, node.MethodContext);
-                AddEdgeInternal(node, nextNode, EdgeType.Intraprocedural);
+                AddEdgeInternal(node, nextNodeAfterCurrentOp, EdgeType.CallToReturn);
             }
-            else
+
+
+            foreach (var inv in invocations)
             {
-                // If this is the last operation in the block, add edge to successor blocks
-                foreach (var succ in new[] { block.ConditionalSuccessor, block.FallThroughSuccessor })
+                IMethodSymbol? targetMethod = inv.TargetMethod;
+                if (targetMethod is null) continue;
+
+                // Determine potential concrete callees
+                IEnumerable<IMethodSymbol> potentialCallees;
+                if (targetMethod.IsAbstract || targetMethod.IsVirtual || targetMethod.ContainingType.TypeKind == TypeKind.Interface)
                 {
-                    if (succ?.Destination is null) continue;
+                    potentialCallees = await FindImplementationsAsync(targetMethod).ConfigureAwait(false);
+                }
+                else if (!targetMethod.IsExtern)
+                {
+                    potentialCallees = new[] { targetMethod };
+                }
+                else
+                {
+                    potentialCallees = Enumerable.Empty<IMethodSymbol>();
+                }
 
-                    var targetOp = succ?.Destination?.Operations.FirstOrDefault();
-                    if (targetOp is not null)
-                    {
-                        var succNode = FindOrCreateNode(targetOp, node.MethodContext);
-                        AddEdgeInternal(node, succNode, EdgeType.Intraprocedural);
-                    }
+                // Add edges for each potential concrete callee
+                foreach (var callee in potentialCallees)
+                {
+                    // Should be concrete if found via FindImplementationsAsync
+                    if (callee.IsAbstract || callee.IsExtern) continue;
 
-                    // Edge into synthetic exit block
-                    else if (succ.Destination.Kind == BasicBlockKind.Exit)
+                    ICFGNode calleeEntry = GetOrAddEntryNode(callee);
+
+                    // Add Call edge from call site (node) to callee entry
+                    AddEdgeInternal(node, calleeEntry, EdgeType.Call);
+
+                    // Add CallToReturn edge and record caller info (if return site exists)
+                    if (nextNodeAfterCurrentOp != null)
                     {
-                        var exitNode = FindOrCreateNode(null, node.MethodContext, ICFGNodeKind.Exit);
-                        AddEdgeInternal(node, exitNode, EdgeType.Intraprocedural);
+                        // Ensure list exists and add the caller info
+                        var callersList = _callers.GetOrAdd(callee, _ => new List<(ICFGNode, ICFGNode)>());
+                        
+                        lock (callersList)
+                        {
+                            // Avoid adding duplicates if somehow processed twice (shouldn't happen with GetOrAdd logic)
+                            if (!callersList.Contains((node, nextNodeAfterCurrentOp)))
+                            {
+                                callersList.Add((node, nextNodeAfterCurrentOp));
+                            }
+                        }
                     }
                 }
             }
         }
-        
-
-        // - Call / Call-To-Return
-        foreach (var inv in node.Operation.DescendantsAndSelf().OfType<IInvocationOperation>())
+        else
         {
-            var targetMethod = inv.TargetMethod;
-            if (targetMethod is null) continue;
+            // --- Handle node as Normal Intraprocedural Step ---
+            // The successor is simply the calculated nextNodeAfterCurrentOp
 
-            IEnumerable<IMethodSymbol> potentialCallees;
-
-
-            // If the method is abstract, virtual, or an interface method, we need to handle it differently
-            if (targetMethod.IsAbstract || targetMethod.IsVirtual || targetMethod.ContainingType.TypeKind == TypeKind.Interface)
+            if (nextNodeAfterCurrentOp != null)
             {
-                potentialCallees = await FindImplementationsAsync(targetMethod);
-            }
-            else if (!targetMethod.IsExtern)
-            {
-                // Handle direct non-extern calls
-                potentialCallees = new[] { targetMethod };
+                AddEdgeInternal(node, nextNodeAfterCurrentOp, EdgeType.Intraprocedural);
             }
             else
             {
-                potentialCallees = Enumerable.Empty<IMethodSymbol>();
-            }
-
-
-
-
-
-
-
-                var calleeEntry = GetOrAddEntryNode(targetMethod);
-
-
-
-
-
-
-            // Add a Call edge from the current node (the call site) to the callee's entry node
-            AddEdgeInternal(node, calleeEntry, EdgeType.Call);
-
-            // Find the return side node: the program point immediately after the call site
-            ICFGNode? returnNode = null;
-            var ops = block.Operations;
-
-            int index = Array.IndexOf(ops.ToArray(), node.Operation);
-            if (index >= 0 && index + 1 < ops.Length)
-            {
-                var nextOperation = ops[index + 1];
-                returnNode = FindOrCreateNode(nextOperation, node.MethodContext);
-            }
-            else
-            {
-                var fallOperation = block.FallThroughSuccessor?.Destination?.Operations.FirstOrDefault();
-                if (fallOperation != null)
-                {
-                    returnNode = FindOrCreateNode(fallOperation, node.MethodContext);
-                }
-                else if (block.FallThroughSuccessor?.Destination?.Kind == BasicBlockKind.Exit)
-                {
-                    returnNode = FindOrCreateNode(null, node.MethodContext, ICFGNodeKind.Exit);
-                }
-            }
-
-            if (returnNode != null)
-            {
-                // Add a CallToReturn edge from the current node (the call site) to the return site node.
-                AddEdgeInternal(node, returnNode, EdgeType.CallToReturn);
-
-                // Record the call site node and its return node for Return edge generation later by the callee's Exit node.
-                // GetOrAdd is used for thread safety, ensuring the list exists.
-                _callers.GetOrAdd(targetMethod, _ => new()).Add((node, returnNode));
+                // This might happen if CalculateReturnSiteNode couldn't find a successor
+                // (e.g., end of method, throw without catch). Often leads to Exit node implicitly.
+                Console.WriteLine($"Warning: No intraprocedural successor found for non-call node: {node}");
+                // Optionally add edge to Exit node as fallback?
+                // var exitNode = FindOrCreateNode(null, node.MethodContext, ICFGNodeKind.Exit);
+                // AddEdgeInternal(node, exitNode, EdgeType.Intraprocedural);
             }
         }
     }
@@ -301,6 +294,49 @@ public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
                 predecessorList.Add(edge);
             }
         }
+    }
+
+
+    private ICFGNode? CalculateReturnSiteNode(BasicBlock block, ICFGNode node)
+    {
+        int operationIndex = Array.IndexOf(block.Operations.ToArray(), node.Operation);
+        IOperation? nextOperationInBlock = (operationIndex >= 0 && operationIndex < block.Operations.Length - 1)
+                                           ? block.Operations[operationIndex + 1]
+                                           : null;
+
+        if (nextOperationInBlock != null)
+        {
+            return FindOrCreateNode(nextOperationInBlock, node.MethodContext);
+        }
+        else
+        {
+            BasicBlock? fallThroughDest = block.FallThroughSuccessor?.Destination;
+            IOperation? fallThroughOp = fallThroughDest?.Operations.FirstOrDefault();
+
+            if (fallThroughOp != null)
+            {
+                return FindOrCreateNode(fallThroughOp, node.MethodContext);
+            }
+            else if (fallThroughDest?.Kind == BasicBlockKind.Exit)
+            {
+                return FindOrCreateNode(null, node.MethodContext, ICFGNodeKind.Exit);
+            }
+            else
+            {
+                // Check conditional successor if fallthrough didn't yield a node
+                BasicBlock? conditionalDest = block.ConditionalSuccessor?.Destination;
+                IOperation? conditionalOp = conditionalDest?.Operations.FirstOrDefault();
+                if (conditionalOp != null)
+                {
+                    return FindOrCreateNode(conditionalOp, node.MethodContext);
+                }
+                else if (conditionalDest?.Kind == BasicBlockKind.Exit)
+                {
+                    return FindOrCreateNode(null, node.MethodContext, ICFGNodeKind.Exit);
+                }
+            }
+        }
+        return null;
     }
 
     private static bool ContainsInvocation(IOperation op)
@@ -403,8 +439,7 @@ public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
         {
             try
             {
-                // TODO: Get real solution
-                var implementingTypes = await SymbolFinder.FindImplementationsAsync(baseMethod.ContainingType, solution: null);
+                var implementingTypes = await SymbolFinder.FindImplementationsAsync(baseMethod.ContainingType, _project.Solution);
                 foreach (var typeSymbol in implementingTypes)
                 {
                     var member = typeSymbol.FindImplementationForInterfaceMember(baseMethod);
@@ -424,7 +459,7 @@ public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
             // Virtual or Abstract method in a class
             try
             {
-                var overridingMethods = await SymbolFinder.FindOverridesAsync(baseMethod, solution: null, null, CancellationToken.None);
+                var overridingMethods = await SymbolFinder.FindOverridesAsync(baseMethod, _project.Solution, null, CancellationToken.None);
                 implementations.AddRange(overridingMethods.OfType<IMethodSymbol>().Where(m => !m.IsAbstract));
             }
             catch (Exception ex)

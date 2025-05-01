@@ -45,23 +45,26 @@ public sealed class TaintDiagnosticReporter
                 for (int i = 0; i < inv.Arguments.Length; ++i)
                 {
                     var arg = inv.Arguments[i];
-                    var baseSymbol = GetBaseSymbol(arg.Value);
-                    if (baseSymbol is null) continue;
+                    HashSet<ISymbol> contributingSymbols = FindContributingBaseSymbols(arg.Value);
 
-                    // Any tainted fact whose access-path *base* matches?
-                    if (facts.FirstOrDefault(f => SymbolEqualityComparer.Default.Equals(
-                                                    f.Path.Base, baseSymbol))
-                        is not { } matchedFact)
-                        continue;
+                    if (!contributingSymbols.Any()) continue; // No symbols found for this argument
+                    
+                    foreach (TaintFact fact in facts)
+                    {
+                        if (fact?.Path?.Base != null && contributingSymbols.Contains(fact.Path.Base))
+                        {
+                            // Match found!
+                            var trace = BuildOneTrace(new ExplodedGraphNode(node, fact));
 
-                    var trace = BuildOneTrace(new ExplodedGraphNode(node, matchedFact));
-
-                    yield return new TaintFinding(
-                        Sink: inv.TargetMethod,
-                        ArgIndex: i,
-                        SinkNode: node,
-                        Fact: matchedFact,
-                        Trace: trace);
+                            yield return new TaintFinding(
+                                Sink: inv.TargetMethod,
+                                ArgIndex: i,
+                                SinkNode: node,
+                                Fact: fact,
+                                Trace: trace);
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -122,6 +125,7 @@ public sealed class TaintDiagnosticReporter
         IParameterReferenceOperation p => p.Parameter,
         IFieldReferenceOperation f => f.Member,
         IPropertyReferenceOperation pr => pr.Property,
+        //IInterpolatedStringOperation iso => iso.
         _ => null
     };
 
@@ -155,4 +159,123 @@ public sealed class TaintDiagnosticReporter
         trace.Reverse();
         return trace;
     }
+
+
+    private void FindContributingBaseSymbols(IOperation? operation, HashSet<ISymbol> collectedSymbols, int depth = 0)
+    {
+        // Basic recursion depth limit to prevent stack overflow on complex/cyclic structures
+        const int maxDepth = 10;
+        if (operation == null || depth > maxDepth || collectedSymbols == null)
+        {
+            return;
+        }
+
+        // --- Base Cases: Direct References ---
+        switch (operation)
+        {
+            case ILocalReferenceOperation l:
+                collectedSymbols.Add(l.Local);
+                return; // Found a base symbol, stop descent here for this path
+            case IParameterReferenceOperation p:
+                collectedSymbols.Add(p.Parameter);
+                return; // Found a base symbol, stop descent here
+            case IFieldReferenceOperation f:
+                // Option 1: Consider the field itself as a potential base if your TaintFact supports it.
+                // collectedSymbols.Add(f.Field);
+                // Option 2 (More common for base symbol tracking): Recurse on the instance
+                FindContributingBaseSymbols(f.Instance, collectedSymbols, depth + 1);
+                return; // Stop descent after handling instance
+            case IPropertyReferenceOperation pr:
+                // Similar to fields, often interested in the instance the property is called on.
+                // Properties might have complex getters; treat cautiously.
+                FindContributingBaseSymbols(pr.Instance, collectedSymbols, depth + 1);
+                // You might also consider adding the Property symbol itself if relevant to your TaintFact
+                // collectedSymbols.Add(pr.Property);
+                return; // Stop descent after handling instance
+            case IInstanceReferenceOperation i: // 'this' or 'base' reference
+                                                // You might represent 'this' with the containing type symbol or a special marker
+                                                // collectedSymbols.Add(i.Type); // Example: using the type symbol
+                return;
+            case ILiteralOperation lit:
+                // Literals generally aren't base symbols unless representing specific sensitive strings
+                return;
+        }
+
+        // --- Recursive Steps for Common Operations ---
+        switch (operation)
+        {
+            case IConversionOperation conv:
+                FindContributingBaseSymbols(conv.Operand, collectedSymbols, depth + 1);
+                break;
+            case IBinaryOperation binOp:
+                FindContributingBaseSymbols(binOp.LeftOperand, collectedSymbols, depth + 1);
+                FindContributingBaseSymbols(binOp.RightOperand, collectedSymbols, depth + 1);
+                break;
+            case IUnaryOperation unOp:
+                FindContributingBaseSymbols(unOp.Operand, collectedSymbols, depth + 1);
+                break;
+            case IInvocationOperation inv:
+                // Recurse on arguments and the instance receiver
+                FindContributingBaseSymbols(inv.Instance, collectedSymbols, depth + 1);
+                foreach (var arg in inv.Arguments)
+                {
+                    FindContributingBaseSymbols(arg.Value, collectedSymbols, depth + 1);
+                }
+                // Note: We usually DON'T add the invocation's result symbol here,
+                // as taint flow through calls is handled by the main IFDS analysis.
+                // We only care about the symbols *used* to make the call or provide its arguments.
+                break;
+            case IInterpolatedStringOperation interp:
+                // Recurse on the expression parts of the interpolation
+                foreach (var part in interp.Parts.OfType<IInterpolationOperation>())
+                {
+                    FindContributingBaseSymbols(part.Expression, collectedSymbols, depth + 1);
+                    // Optional: Also check part.Alignment and part.FormatClause if they can be tainted
+                }
+                break;
+            case IMemberReferenceOperation memRef: // Catches fields/properties again, but useful as fallback
+                FindContributingBaseSymbols(memRef.Instance, collectedSymbols, depth + 1);
+                // Optionally add memRef.Member here if TaintFact tracks specific members
+                // collectedSymbols.Add(memRef.Member);
+                break;
+            case IArgumentOperation argOp: // Handle Argument operations directly if needed
+                FindContributingBaseSymbols(argOp.Value, collectedSymbols, depth + 1);
+                break;
+            case IObjectCreationOperation objCreation:
+                foreach (var arg in objCreation.Arguments)
+                {
+                    FindContributingBaseSymbols(arg.Value, collectedSymbols, depth + 1);
+                }
+                // Handle Initializer if present
+                FindContributingBaseSymbols(objCreation.Initializer, collectedSymbols, depth + 1);
+                break;
+            case IObjectOrCollectionInitializerOperation initializer:
+                foreach (var memberInit in initializer.Initializers)
+                {
+                    FindContributingBaseSymbols(memberInit, collectedSymbols, depth + 1);
+                }
+                break;
+            case ISimpleAssignmentOperation assignmentTarget: // When initializer target is assigned
+                                                              // This case might need specific handling if analyzing initializers directly
+                                                              // For argument checking, usually handled by top-level switch (ILocalRef, etc.)
+                break;
+            // --- Default: Recurse on all children ---
+            // Fallback for operations not explicitly handled above
+            default:
+                foreach (var child in operation.ChildOperations)
+                {
+                    FindContributingBaseSymbols(child, collectedSymbols, depth + 1);
+                }
+                break;
+        }
+    }
+
+    // Overload to start the process
+    private HashSet<ISymbol> FindContributingBaseSymbols(IOperation operation)
+    {
+        var symbols = new HashSet<ISymbol>(SymbolEqualityComparer.Default);
+        FindContributingBaseSymbols(operation, symbols);
+        return symbols;
+    }
+
 }
