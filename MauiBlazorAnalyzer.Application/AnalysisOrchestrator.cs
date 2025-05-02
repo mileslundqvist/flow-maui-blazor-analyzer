@@ -92,7 +92,7 @@ public class AnalysisOrchestrator
         // Creating a small set of nodes to start from for testing
         var analyzer = new BlazorEntryPointAnalyzer(compilation);
         List<EntryPointInfo> entryPoints = analyzer.FindEntryPoints();
-        var taintAnalysisProblem = new TaintAnalysisProblem(project, compilation, entryPoints.Where(e => e.MethodSymbol.ToDisplayString().Contains("SaveCredentials")));
+        var taintAnalysisProblem = new TaintAnalysisProblem(project, compilation, entryPoints);
 
         var solver = new IFDSSolver(taintAnalysisProblem);
         var result = await solver.Solve();

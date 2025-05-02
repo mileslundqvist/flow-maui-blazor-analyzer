@@ -33,10 +33,11 @@ public enum EntryPointType
     EventHandlerMethod,
 
     /// <summary>
-    /// A property setter invoked implicitly via data binding (@bind).
-    /// Taint Source: Value assigned to the property from the UI element.
+    /// Represents the point where a lambda parameter created by @bind receives its value.
+    /// The EntryPointSymbol will be the IParameterSymbol of the lambda.
+    /// Taint Source: The lambda parameter itself.
     /// </summary>
-    BindingSetter
+    BindingCallbackParameter
 }
 
 /// <summary>
@@ -61,6 +62,18 @@ public record EntryPointInfo
     public ISymbol? EntryPointSymbol { get; init; }
 
     /// <summary>
+    /// An optional associated symbol providing context.
+    /// - For BindingCallbackParameter: The IPropertySymbol or IFieldSymbol being assigned to.
+    /// </summary>
+    public ISymbol? AssociatedSymbol { get; init; } // NEW
+
+    /// <summary>
+    /// An optional relevant operation providing context.
+    /// - For BindingCallbackParameter: The ISimpleAssignmentOperation within the lambda.
+    /// </summary>
+    public IOperation? Operation { get; init; } // NEW
+
+    /// <summary>
     /// The specific method symbol (for methods, setters, event handlers).
     /// </summary>
     public IMethodSymbol? MethodSymbol => EntryPointSymbol as IMethodSymbol;
@@ -70,6 +83,7 @@ public record EntryPointInfo
     /// </summary>
     public IPropertySymbol? PropertySymbol => EntryPointSymbol as IPropertySymbol;
 
+    public IParameterSymbol? ParameterSymbol => EntryPointSymbol as IParameterSymbol; // NEW
 
     /// <summary>
     /// Location of the entry point declaration in source code, if available.
@@ -89,9 +103,13 @@ public record EntryPointInfo
     public override string ToString()
     {
         string locationStr = Location?.GetMappedLineSpan().ToString() ?? "N/A";
-        string parameters = TaintedParameters.Any()
-            ? $" (Params: {string.Join(", ", TaintedParameters.Select(p => p.Name))})"
+        string entrySymbolKind = EntryPointSymbol?.Kind.ToString() ?? "N/A";
+        string assocSymbolInfo = AssociatedSymbol != null ? $" -> {AssociatedSymbol.Kind} {AssociatedSymbol.Name}" : "";
+        string operationInfo = Operation != null ? $" (Op: {Operation.Kind})" : "";
+        string paramsInfo = TaintedParameters.Any()
+            ? $" (TaintedParams: {string.Join(", ", TaintedParameters.Select(p => p.Name))})"
             : "";
-        return $"{Type}: {ContainingTypeName}.{Name}{parameters} [{locationStr}]";
+
+        return $"{Type}: {ContainingTypeName}.{Name} ({entrySymbolKind}){assocSymbolInfo}{paramsInfo}{operationInfo} [{locationStr}]";
     }
 }
