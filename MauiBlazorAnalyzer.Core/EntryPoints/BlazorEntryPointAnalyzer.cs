@@ -525,9 +525,6 @@ public class BlazorEntryPointAnalyzer
 
         if (buildRenderTreeMethod == null) return;
 
-        // Remove!!!
-        if (!componentTypeSymbol.Name.Contains("Counter")) return;
-
         foreach (var syntaxRef in buildRenderTreeMethod.DeclaringSyntaxReferences)
         {
             var syntaxTree = syntaxRef.SyntaxTree;
