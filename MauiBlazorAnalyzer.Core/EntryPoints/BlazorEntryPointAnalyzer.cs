@@ -15,6 +15,10 @@ public class BlazorEntryPointAnalyzer
     private readonly INamedTypeSymbol? _jsInvokableAttributeSymbol;
     private readonly INamedTypeSymbol? _eventCallbackFactorySymbol;
 
+    private readonly INamedTypeSymbol? _renderTreeBuilderSymbol; // Add symbol for RenderTreeBuilder
+    private readonly INamedTypeSymbol? _changeEventArgsSymbol; // Add symbol for ChangeEventArgs (optional but good for validation)
+
+
     private static readonly HashSet<string> LifecycleMethodNames = new()
     {
         "OnInitialized", "OnInitializedAsync",
@@ -22,6 +26,14 @@ public class BlazorEntryPointAnalyzer
         "OnAfterRender", "OnAfterRenderAsync",
         "SetParametersAsync",
         "ShouldRender"
+    };
+
+    // Helper set for typical @bind event attribute names
+    private static readonly HashSet<string> BindEventAttributeNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "onchange",
+        "oninput"
+        // Add other events if needed (e.g., for custom elements/bindings)
     };
 
     public BlazorEntryPointAnalyzer(Compilation compilation)
@@ -35,6 +47,8 @@ public class BlazorEntryPointAnalyzer
         _cascadingParameterAttributeSymbol = compilation.GetTypeByMetadataName("Microsoft.AspNetCore.Components.CascadingParameterAttribute");
         _jsInvokableAttributeSymbol = compilation.GetTypeByMetadataName("Microsoft.JSInterop.JSInvokableAttribute");
         _eventCallbackFactorySymbol ??= compilation.GetTypeByMetadataName("Microsoft.AspNetCore.Components.EventCallbackFactory"); // Used later
+        _renderTreeBuilderSymbol = compilation.GetTypeByMetadataName("Microsoft.AspNetCore.Components.Rendering.RenderTreeBuilder");
+        _changeEventArgsSymbol = compilation.GetTypeByMetadataName("Microsoft.AspNetCore.Components.ChangeEventArgs");
     }
 
     /// <summary>
@@ -92,7 +106,239 @@ public class BlazorEntryPointAnalyzer
         FindJSInvokableMethods(componentTypeSymbol, entryPoints); // Can be in components too
         FindLifecycleMethods(componentTypeSymbol, entryPoints);
         FindEventHandlerMethods(componentTypeSymbol, entryPoints);
-        //FindBindingSetters(componentTypeSymbol, entryPoints); // Add later if needed
+        FindBindingCallbacks(componentTypeSymbol, entryPoints);
+    }
+
+    private void FindBindingCallbacks(
+        INamedTypeSymbol componentType,
+        List<EntryPointInfo> entryPoints)
+    {
+        // Find the generated BuildRenderTree method
+        var buildRenderTreeMethod = componentType.GetMembers("BuildRenderTree")
+                                             .OfType<IMethodSymbol>()
+                                             .FirstOrDefault(m => !m.IsStatic &&
+                                                                 m.Parameters.Length == 1 &&
+                                                                 SymbolEqualityComparer.Default.Equals(m.Parameters[0].Type.OriginalDefinition, _renderTreeBuilderSymbol)); // Use symbol comparison
+
+        if (buildRenderTreeMethod == null || _eventCallbackFactorySymbol == null || _renderTreeBuilderSymbol == null)
+        {
+            // Required symbols or method not found
+            return;
+        }
+
+        foreach (var syntaxRef in buildRenderTreeMethod.DeclaringSyntaxReferences)
+        {
+            var model = _compilation.GetSemanticModel(syntaxRef.SyntaxTree);
+            var rootNode = syntaxRef.GetSyntax();
+            var operation = model.GetOperation(rootNode);
+            if (operation == null) continue;
+
+            // Find all invocations within the BuildRenderTree method body
+            foreach (var invocationOp in operation.Descendants().OfType<IInvocationOperation>())
+            {
+                // Check if it's RenderTreeBuilder.AddAttribute(...)
+                if (invocationOp.TargetMethod.Name == "AddAttribute" &&
+                    SymbolEqualityComparer.Default.Equals(invocationOp.TargetMethod.ContainingType?.OriginalDefinition, _renderTreeBuilderSymbol) &&
+                    invocationOp.Arguments.Length >= 3) // Need at least sequence, name, value
+                {
+                    // Argument 1: Attribute Name (string literal)
+                    var nameArg = invocationOp.Arguments.FirstOrDefault(a => a.Parameter?.Name == "name");
+                    if (nameArg == null && invocationOp.Arguments.Length > 1) nameArg = invocationOp.Arguments[1]; // Fallback to index
+
+                    if (nameArg?.Value is ILiteralOperation { ConstantValue: { HasValue: true, Value: string attrName } } &&
+                        BindEventAttributeNames.Contains(attrName)) // Is it a known binding event like "onchange"?
+                    {
+
+                        // Argument 2: Attribute Value (expecting EventCallbackFactory.Create)
+                        var valueArg = invocationOp.Arguments.FirstOrDefault(a => a.Parameter?.Name == "value");
+                        if (valueArg == null && invocationOp.Arguments.Length > 2) valueArg = invocationOp.Arguments[2]; // Fallback to index
+
+
+                        if (valueArg?.Value is IInvocationOperation valueInvocation )
+                        {
+                            IDelegateCreationOperation? delegateCreation = null;
+
+                            // Check 1: Is the method name "Create"? (Using exact match ==)
+                            bool isCreateMethod = valueInvocation.TargetMethod.Name == "Create";
+
+                            // Check 2: Does "Create" have enough arguments? (>= 2)
+                            bool createHasEnoughArguments = valueInvocation.Arguments.Length >= 2;
+
+                            if (isCreateMethod && createHasEnoughArguments)
+                            {
+                                var handlerDelegateArg = valueInvocation.Arguments.FirstOrDefault(a => a.Parameter?.Name == "callback") ?? (valueInvocation.Arguments.Length > 1 ? valueInvocation.Arguments[1] : null);
+                                delegateCreation = handlerDelegateArg?.Value as IDelegateCreationOperation;
+                            }
+                            else
+                            {
+                                // *** Let's break down the check for "CreateBinder" ***
+
+                                // Check 3: Is the method name "CreateBinder"?
+                                bool isCreateBinderMethod = valueInvocation.TargetMethod.Name == "CreateBinder";
+
+                                // Check 4: Does "CreateBinder" have enough arguments? (>= 3)
+                                bool binderHasEnoughArguments = valueInvocation.Arguments.Length >= 3;
+
+                                // Combine the checks for the "CreateBinder" case
+                                if (isCreateBinderMethod && binderHasEnoughArguments)
+                                {
+                                    // Extracted logic for "CreateBinder" case:
+                                    var setterArgument = valueInvocation.Arguments.FirstOrDefault(arg => arg.Parameter?.Name == "setter") ?? (valueInvocation.Arguments.Length > 1 ? valueInvocation.Arguments[1] : null);
+                                    delegateCreation = setterArgument?.Value as IDelegateCreationOperation;
+                                }
+                            }
+                            if (delegateCreation != null)
+                            {
+                                // Pass attrName to the helper method
+                                AnalyzeBindingSetterDelegate(delegateCreation, componentType, entryPoints, valueInvocation.Syntax.GetLocation(), attrName);
+                            }
+                        }
+                    }
+                }
+                // ----- Keep the CreateBinder check as a potential alternative/fallback -----
+                // This might be used for component parameter binding (@bind-Value) or programmatically created bindings.
+                else if (invocationOp.TargetMethod.Name == "CreateBinder" &&
+                         SymbolEqualityComparer.Default.Equals(invocationOp.TargetMethod.ContainingType?.OriginalDefinition, _eventCallbackFactorySymbol) &&
+                         invocationOp.Arguments.Length >= 3) // Need receiver, setter, getter
+                {
+                    var setterArgument = invocationOp.Arguments.FirstOrDefault(arg => arg.Parameter?.Name == "setter"); // Find by name "setter"
+                    if (setterArgument == null && invocationOp.Arguments.Length > 1) setterArgument = invocationOp.Arguments[1]; // Fallback to index 1
+
+                    if (setterArgument?.Value is IDelegateCreationOperation delegateCreation)
+                    {
+                        AnalyzeBindingSetterDelegate(delegateCreation, componentType, entryPoints, invocationOp.Syntax.GetLocation(), null);
+                    }
+                }
+            }
+        }
+    }
+
+
+    private void AnalyzeBindingSetterDelegate(
+        IDelegateCreationOperation delegateCreation,
+        INamedTypeSymbol componentType,
+        List<EntryPointInfo> entryPoints,
+        Location diagnosticLocation,
+        string? attrName
+        )
+    {
+        if (delegateCreation.Target is IAnonymousFunctionOperation lambdaOp)
+        {
+            // Find the assignment operation within the lambda body
+            ISimpleAssignmentOperation? assignment = FindAssignmentInLambda(lambdaOp);
+
+            if (assignment != null)
+            {
+                // Analyze the target of the assignment (LHS)
+                ISymbol? targetSymbol = GetAssignmentTargetSymbol(assignment, componentType);
+
+                if (targetSymbol != null)
+                {
+                    // Avoid adding duplicates based on the target symbol AND the lambda generating the assignment
+                    if (!entryPoints.Any(ep => ep.Type == EntryPointType.BindingCallback &&
+                                               SymbolEqualityComparer.Default.Equals(ep.AssociatedSymbol, targetSymbol) &&
+                                               SymbolEqualityComparer.Default.Equals(ep.EntryPointSymbol, lambdaOp.Symbol)))
+                    {
+                        entryPoints.Add(new EntryPointInfo
+                        {
+                            Type = EntryPointType.BindingCallback,
+                            ContainingTypeName = componentType.ToDisplayString(),
+                            EntryPointSymbol = lambdaOp.Symbol, // The synthetic method for the lambda
+                            AssociatedSymbol = targetSymbol,   // The Property/Field being assigned to (this is what gets tainted)
+                            Operation = assignment,          // Store the assignment operation for context
+                            Name = $"@bind-update:{attrName ?? "event"} → {targetSymbol.Name}", // Include event name if possible
+                            Location = diagnosticLocation, // Use location of the Create call or AddAttribute call
+                            TaintedVariables = new List<ISymbol> { targetSymbol } // Explicitly list the tainted variable
+                        });
+                    }
+                }
+            }
+        }
+        else if (delegateCreation.Target is IMethodReferenceOperation methodRef)
+        {
+            // Handle Method Group binding: @bind="MySetterMethod"
+            var targetMethod = methodRef.Method;
+            // Ensure the method belongs to the component and is suitable (e.g., takes one parameter)
+            if (SymbolEqualityComparer.Default.Equals(targetMethod.ContainingType, componentType) &&
+                targetMethod.Parameters.Length > 0) // Assume first parameter is the value source
+            {
+                // The *method itself* is the entry point, and its *parameters* are the source of taint.
+                // However, for IFDS, we are interested in where the taint *goes*.
+                // We need to analyze the *body* of 'targetMethod' to see which field/property it assigns to.
+                // This requires getting the IOperation for targetMethod's body, which is more involved.
+
+                // Simpler approach for now: Add the method as an entry point, maybe mark parameters as tainted.
+                // The IFDS analysis itself would then track taint flow from the parameter *inside* the method.
+                if (!entryPoints.Any(ep => ep.Type == EntryPointType.BindingCallback &&
+                                           SymbolEqualityComparer.Default.Equals(ep.EntryPointSymbol, targetMethod)))
+                {
+                    entryPoints.Add(new EntryPointInfo
+                    {
+                        Type = EntryPointType.BindingCallback, // Or maybe a distinct type like BindingMethodHandler?
+                        ContainingTypeName = componentType.ToDisplayString(),
+                        EntryPointSymbol = targetMethod, // The actual method used as callback
+                        AssociatedSymbol = null, // Target isn't known without analyzing the method body
+                        Operation = methodRef,
+                        Name = $"@bind-method:{attrName ?? "event"} → {targetMethod.Name}",
+                        Location = diagnosticLocation,
+                        // Decide how to mark taint for IFDS: taint the method's parameters?
+                        TaintedParameters = targetMethod.Parameters.ToList() // Mark parameters as potential sources
+                    });
+                }
+            }
+        }
+    }
+
+
+
+
+    // Helper to find the assignment within a lambda (extracted for clarity)
+    private ISimpleAssignmentOperation? FindAssignmentInLambda(IAnonymousFunctionOperation lambdaOp)
+    {
+        if (lambdaOp.Body is IBlockOperation blockBody)
+        {
+            // Look for the first simple assignment statement in the block
+            return blockBody.Operations.OfType<IExpressionStatementOperation>()
+                                       .Select(stmt => stmt.Operation)
+                                       .OfType<ISimpleAssignmentOperation>()
+                                       .FirstOrDefault();
+        }
+        // Add checks for other lambda body structures if necessary
+        // else if (lambdaOp.Body is ISimpleAssignmentOperation directAssignment) { return directAssignment; }
+        return null; // Not found or unsupported structure
+    }
+
+    // Helper to get the Field/Property symbol from the assignment target (extracted for clarity)
+    private ISymbol? GetAssignmentTargetSymbol(ISimpleAssignmentOperation assignment, INamedTypeSymbol componentType)
+    {
+        IOperation targetOperation = assignment.Target;
+        // Unwrap potential conversions
+        while (targetOperation is IConversionOperation conversion)
+        {
+            targetOperation = conversion.Operand;
+        }
+
+        ISymbol? targetSymbol = null;
+        switch (targetOperation)
+        {
+            case IPropertyReferenceOperation propRef:
+                targetSymbol = propRef.Property;
+                break;
+            case IFieldReferenceOperation fieldRef:
+                targetSymbol = fieldRef.Field;
+                break;
+                // Could add ILocalReferenceOperation etc. if binding to locals were common/supported
+        }
+
+        // Validate: Ensure the symbol exists, is assignable (Property needs setter), and belongs to the component
+        if (targetSymbol != null &&
+            (targetSymbol is IFieldSymbol || targetSymbol is IPropertySymbol p && p.SetMethod != null) &&
+            SymbolEqualityComparer.Default.Equals(targetSymbol.ContainingType, componentType))
+        {
+            return targetSymbol;
+        }
+
+        return null; // Invalid or external target
     }
 
     /// <summary>
@@ -275,15 +521,18 @@ public class BlazorEntryPointAnalyzer
     {
         var buildRenderTreeMethod = componentTypeSymbol.GetMembers("BuildRenderTree")
                                      .OfType<IMethodSymbol>()
-                                     .FirstOrDefault(m => m.Parameters.Length == 1); // Basic check for the correct overload
+                                     .FirstOrDefault(m => m.Parameters.Length == 1);
 
         if (buildRenderTreeMethod == null) return;
+
+        // Remove!!!
+        if (!componentTypeSymbol.Name.Contains("Counter")) return;
 
         foreach (var syntaxRef in buildRenderTreeMethod.DeclaringSyntaxReferences)
         {
             var syntaxTree = syntaxRef.SyntaxTree;
             var semanticModel = _compilation.GetSemanticModel(syntaxTree);
-            var walker = new EventHandlerSyntaxWalker(semanticModel, _eventCallbackFactorySymbol, componentTypeSymbol, entryPoints);
+            var walker = new EventHandlerSyntaxWalker(semanticModel, _renderTreeBuilderSymbol, _eventCallbackFactorySymbol, componentTypeSymbol, entryPoints);
             walker.Visit(syntaxRef.GetSyntax()); // Walk the syntax node of the BuildRenderTree method
         }
     }
@@ -296,23 +545,24 @@ public class BlazorEntryPointAnalyzer
 internal class EventHandlerSyntaxWalker : CSharpSyntaxWalker
 {
     private readonly SemanticModel _semanticModel;
+    private readonly INamedTypeSymbol? _renderTreeBuilderSymbol;
     private readonly INamedTypeSymbol? _eventCallbackFactorySymbol;
     private readonly INamedTypeSymbol _componentTypeSymbol;
     private readonly List<EntryPointInfo> _entryPoints;
 
-    // Keep the HashSet for efficient lookup
-    private static readonly HashSet<string> BinderMethodNames = new()
-    {
-        "CreateBinder",
-        "CreateInferred"
-        // Add other binder methods if they exist/are relevant
-    };
     private const string CreateMethodName = "Create";
 
+    private static readonly HashSet<string> EventAttributePrefixes = new(StringComparer.OrdinalIgnoreCase) { "on" };
 
-    public EventHandlerSyntaxWalker(SemanticModel semanticModel, INamedTypeSymbol? eventCallbackFactorySymbol, INamedTypeSymbol componentTypeSymbol, List<EntryPointInfo> entryPoints)
+
+    public EventHandlerSyntaxWalker(SemanticModel semanticModel,
+        INamedTypeSymbol? renderTreeBuilderSymbol,
+        INamedTypeSymbol? eventCallbackFactorySymbol, 
+        INamedTypeSymbol componentTypeSymbol,
+        List<EntryPointInfo> entryPoints)
     {
         _semanticModel = semanticModel ?? throw new ArgumentNullException(nameof(semanticModel));
+        _renderTreeBuilderSymbol = renderTreeBuilderSymbol;
         _eventCallbackFactorySymbol = eventCallbackFactorySymbol; // Can be null, checked later
         _componentTypeSymbol = componentTypeSymbol ?? throw new ArgumentNullException(nameof(componentTypeSymbol));
         _entryPoints = entryPoints ?? throw new ArgumentNullException(nameof(entryPoints));
@@ -321,170 +571,115 @@ internal class EventHandlerSyntaxWalker : CSharpSyntaxWalker
     public override void VisitInvocationExpression(InvocationExpressionSyntax node)
     {
         // Ensure EventCallbackFactory symbol is available
-        if (_eventCallbackFactorySymbol == null)
+        if (_renderTreeBuilderSymbol == null || _eventCallbackFactorySymbol == null)
         {
             base.VisitInvocationExpression(node);
             return;
         }
 
         var symbolInfo = _semanticModel.GetSymbolInfo(node);
-        // Use Symbol or CandidateSymbols if necessary (e.g., during incomplete code analysis)
-        var symbol = symbolInfo.Symbol as IMethodSymbol ??
-                     symbolInfo.CandidateSymbols.OfType<IMethodSymbol>().FirstOrDefault();
+        var invokedMethodSymbol = symbolInfo.Symbol as IMethodSymbol ??
+                                 symbolInfo.CandidateSymbols.OfType<IMethodSymbol>().FirstOrDefault();
 
-        if (symbol == null)
+        if (invokedMethodSymbol == null ||
+            invokedMethodSymbol.Name != "AddAttribute" ||
+            !SymbolEqualityComparer.Default.Equals(invokedMethodSymbol.ContainingType?.OriginalDefinition, _renderTreeBuilderSymbol) ||
+            node.ArgumentList == null ||
+            node.ArgumentList.Arguments.Count < 3) // Need sequence, name, value
         {
-            // Consider logging if symbol resolution fails often
-            // Console.WriteLine($"Debug: Could not resolve symbol for invocation: {node.Expression}");
-            base.VisitInvocationExpression(node);
+            base.VisitInvocationExpression(node); // Continue walking children
             return;
         }
 
-        // --- Crucial Check: Ensure the method belongs to EventCallbackFactory ---
-        // Use OriginalDefinition to handle potential generic constructions correctly
-        if (!SymbolEqualityComparer.Default.Equals(symbol.ContainingType?.OriginalDefinition, _eventCallbackFactorySymbol))
+
+        // --- Check if the attribute name looks like an event ---
+        // Argument 1 (index 1) should be the attribute name
+        var nameArgExpr = node.ArgumentList.Arguments.Count > 1 ? node.ArgumentList.Arguments[1].Expression : null;
+        Optional<object?> nameConstValue = _semanticModel.GetConstantValue(nameArgExpr);
+        if (!nameConstValue.HasValue || nameConstValue.Value is not string attrName ||
+            !EventAttributePrefixes.Any(prefix => attrName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
         {
-            base.VisitInvocationExpression(node);
+            base.VisitInvocationExpression(node); // Continue walking children
             return;
         }
 
-        // Use the resolved symbol's name for checks
-        string methodName = symbol.Name;
-        bool isBinder = BinderMethodNames.Contains(methodName);
-        bool isCreate = methodName == CreateMethodName;
 
-        // --- Logging for Debugging `isBinder` issues ---
-        // Console.WriteLine($"Debug: Visiting invocation of {symbol.ContainingType?.Name}.{methodName}. isBinder={isBinder}, isCreate={isCreate}");
-        // --- End Debugging ---
-
-        if (!isBinder && !isCreate)
+        // --- Check if the attribute value (Argument 2, index 2) is EventCallbackFactory.Create ---
+        var valueArgExpr = node.ArgumentList.Arguments.Count > 2 ? node.ArgumentList.Arguments[2].Expression : null;
+        if (valueArgExpr is InvocationExpressionSyntax valueInvocationExpr) // Is the value an invocation?
         {
-            base.VisitInvocationExpression(node); // Ignore other methods like CreateCore
-            return;
-        }
+            var valueSymbolInfo = _semanticModel.GetSymbolInfo(valueInvocationExpr);
+            var valueMethodSymbol = valueSymbolInfo.Symbol as IMethodSymbol ??
+                                    valueSymbolInfo.CandidateSymbols.OfType<IMethodSymbol>().FirstOrDefault();
 
-        // Arguments: Receiver (this), Handler/Lambda, CurrentValue (for binder)
-        if (node.ArgumentList == null || node.ArgumentList.Arguments.Count < 2)
-        {
-            base.VisitInvocationExpression(node);
-            return;
-        }
-
-        var secondArgExpr = node.ArgumentList.Arguments[1].Expression;
-
-        // --- Handle @bind -> CreateBinder / CreateInferred ---
-        if (isBinder)
-        {
-            if (secondArgExpr is LambdaExpressionSyntax lambdaSyntax)
+            // Is it EventCallbackFactory.Create?
+            if (valueMethodSymbol != null &&
+                valueMethodSymbol.Name == "Create" && // Use constant if defined
+                SymbolEqualityComparer.Default.Equals(valueMethodSymbol.ContainingType?.OriginalDefinition, _eventCallbackFactorySymbol) &&
+                valueInvocationExpr.ArgumentList != null &&
+                valueInvocationExpr.ArgumentList.Arguments.Count >= 2) // Needs receiver and callback
             {
-                // --- Refactored Logic ---
-                AnalyzeBindingLambda(lambdaSyntax);
-            }
-            // else: Binder used with something other than a direct lambda? Log or handle if necessary.
-        }
-        // --- Handle @onclick etc. -> Create ---
-        else if (isCreate)
-        {
-            ISymbol? handlerSym = ResolveHandlerSymbol(secondArgExpr);
-            if (handlerSym is IMethodSymbol eventHandlerMethod &&
-                SymbolEqualityComparer.Default.Equals(eventHandlerMethod.ContainingType, _componentTypeSymbol))
-            {
-                // Avoid adding duplicates
-                if (!_entryPoints.Any(ep => ep.Type == EntryPointType.EventHandlerMethod &&
-                                            SymbolEqualityComparer.Default.Equals(ep.EntryPointSymbol, eventHandlerMethod)))
+                // --- Found the pattern! Extract the handler method ---
+                // Handler is usually the second argument (index 1) to Create
+                var handlerArgExpr = valueInvocationExpr.ArgumentList.Arguments[1].Expression;
+                ISymbol? handlerSymbol = ResolveHandlerSymbol(handlerArgExpr);
+
+                if (handlerSymbol is IMethodSymbol eventHandlerMethod &&
+                    SymbolEqualityComparer.Default.Equals(eventHandlerMethod.ContainingType, _componentTypeSymbol))
                 {
-                    _entryPoints.Add(new EntryPointInfo
+                    // Add entry point if not already added
+                    if (!_entryPoints.Any(ep => ep.Type == EntryPointType.EventHandlerMethod &&
+                                                 SymbolEqualityComparer.Default.Equals(ep.EntryPointSymbol, eventHandlerMethod)))
                     {
-                        Type = EntryPointType.EventHandlerMethod,
-                        ContainingTypeName = _componentTypeSymbol.ToDisplayString(),
-                        EntryPointSymbol = eventHandlerMethod,
-                        Name = eventHandlerMethod.Name,
-                        Location = eventHandlerMethod.Locations.FirstOrDefault() ?? node.GetLocation()
-                        // AssociatedSymbol = null, // Not needed here
-                        // Operation = null, // Not needed here
-                    });
+                        _entryPoints.Add(new EntryPointInfo
+                        {
+                            Type = EntryPointType.EventHandlerMethod,
+                            ContainingTypeName = _componentTypeSymbol.ToDisplayString(),
+                            EntryPointSymbol = eventHandlerMethod,
+                            Name = $"{attrName} → {eventHandlerMethod.Name}", // Include event name
+                            Location = eventHandlerMethod.Locations.FirstOrDefault() ?? node.GetLocation(), // Prefer method location
+                            // Decide if parameters are tainted (e.g., MouseEventArgs)
+                            // TaintedParameters = eventHandlerMethod.Parameters.ToList()
+                        });
+                    }
+                    // We found the handler, no need to visit children of this AddAttribute call further
+                    return;
                 }
             }
-            // else: Handler is not a method symbol or not in the component type (e.g., could be a delegate instance)
         }
 
-        // Continue walking the tree
+        // If we didn't find the specific pattern, continue walking the children of the AddAttribute call
         base.VisitInvocationExpression(node);
-    }
 
+
+
+        //// --- Handle @onclick etc. -> Create ---
+        //if (true)
+        //{
+        //    ISymbol? handlerSym = ResolveHandlerSymbol(secondArgExpr);
+        //    if (handlerSym is IMethodSymbol eventHandlerMethod &&
+        //        SymbolEqualityComparer.Default.Equals(eventHandlerMethod.ContainingType, _componentTypeSymbol))
+        //    {
+        //        // Avoid adding duplicates
+        //        if (!_entryPoints.Any(ep => ep.Type == EntryPointType.EventHandlerMethod &&
+        //                                    SymbolEqualityComparer.Default.Equals(ep.EntryPointSymbol, eventHandlerMethod)))
+        //        {
+        //            _entryPoints.Add(new EntryPointInfo
+        //            {
+        //                Type = EntryPointType.EventHandlerMethod,
+        //                ContainingTypeName = _componentTypeSymbol.ToDisplayString(),
+        //                EntryPointSymbol = eventHandlerMethod,
+        //                Name = eventHandlerMethod.Name,
+        //                Location = eventHandlerMethod.Locations.FirstOrDefault() ?? node.GetLocation()
+        //            });
+        //        }
+        //    }
+        //}
+    }
 
     private ISymbol? ResolveHandlerSymbol(ExpressionSyntax expr)
     {
-        // Simplified: Get symbol info directly
         var symbolInfo = _semanticModel.GetSymbolInfo(expr);
         return symbolInfo.Symbol ?? symbolInfo.CandidateSymbols.FirstOrDefault();
-        // Original switch was fine too, but this covers IdentifierName, MemberAccess, etc.
-    }
-
-    // --- Renamed and Refactored ---
-    private void AnalyzeBindingLambda(LambdaExpressionSyntax lambdaSyntax)
-    {
-        IOperation? lambdaOperation = _semanticModel.GetOperation(lambdaSyntax);
-
-        // Ensure we have an anonymous function operation with a single parameter
-        if (lambdaOperation is not IAnonymousFunctionOperation { Symbol.Parameters.Length: 1 } fn)
-        {
-            // Console.WriteLine($"Debug: Lambda for binding is not an IAnonymousFunctionOperation with 1 parameter: {lambdaSyntax}");
-            return;
-        }
-
-        IParameterSymbol lambdaParameterSymbol = fn.Symbol.Parameters[0]; // The Taint Source
-
-        // Find the assignment(s) within the lambda body that use the parameter
-        foreach (var assign in fn.Body.DescendantsAndSelf().OfType<ISimpleAssignmentOperation>())
-        {
-            // Check if the value being assigned comes *from* the lambda parameter
-            // This check ensures we only care about assignments like 'Target = lambdaParam;'
-            // or potentially 'Target = Process(lambdaParam);' if Process returns the taint.
-            // For simplicity now, we focus on direct assignment: 'Target = lambdaParam;'
-            if (assign.Value is IParameterReferenceOperation paramRef &&
-                SymbolEqualityComparer.Default.Equals(paramRef.Parameter, lambdaParameterSymbol))
-            {
-                // Resolve the target of the assignment (LHS) - Must be a field/property of the component
-                ISymbol? targetSymbol = assign.Target switch
-                {
-                    // Check instance is 'this' implicitly or explicitly
-                    IPropertyReferenceOperation pRef when pRef.Instance == null || pRef.Instance is IInstanceReferenceOperation => pRef.Property,
-                    IFieldReferenceOperation fRef when fRef.Instance == null || fRef.Instance is IInstanceReferenceOperation => fRef.Field,
-                    _ => null
-                };
-
-
-                // Ensure the target is a member of the component we are analyzing
-                if (targetSymbol != null && SymbolEqualityComparer.Default.Equals(targetSymbol.ContainingType, _componentTypeSymbol))
-                {
-                    // Avoid duplicates based on the assignment operation's location
-                    if (_entryPoints.Any(ep => ep.Type == EntryPointType.BindingCallbackParameter &&
-                                                ep.Operation?.Syntax?.Equals(assign.Syntax) == true))
-                    {
-                        continue;
-                    }
-
-                    _entryPoints.Add(new EntryPointInfo
-                    {
-                        Type = EntryPointType.BindingCallbackParameter,
-                        ContainingTypeName = _componentTypeSymbol.ToDisplayString(),
-                        // --- Key Changes ---
-                        EntryPointSymbol = lambdaParameterSymbol,   // The Parameter is the source entry point
-                        AssociatedSymbol = targetSymbol,           // The Field/Property being assigned to
-                        Operation = assign,                        // The assignment operation itself
-                        // --- End Key Changes ---
-                        Name = $"{targetSymbol.Name} (bind source: {lambdaParameterSymbol.Name})", // Descriptive name
-                        Location = assign.Syntax.GetLocation() // Location of the assignment
-                    });
-
-                    // Typically, a @bind lambda has only one direct assignment using the parameter.
-                    // If more complex scenarios exist, you might only want the first one.
-                    // break; // Uncomment if only the first assignment is desired.
-                }
-                // else: Assignment target is not a component field/property or couldn't be resolved.
-            }
-            // else: Assignment doesn't directly use the lambda parameter on the RHS. Ignore for now.
-        }
     }
 }

@@ -51,7 +51,7 @@ public class TaintAnalysisProblem : IFDSTabulationProblem
         _graph = new InterproceduralCFG(project, compilation, rootMethodSymbols);
 
         // --- Pass EntryPointInfo to Flow Functions ---
-        _flowFunctions = new TaintFlowFunctions(); // Modify constructor
+        _flowFunctions = new TaintFlowFunctions(entryPoints); // Modify constructor
 
         // Compute initial seeds (simplified)
         InitialSeeds = ComputeInitialSeeds(_entryPointsInfo, _graph);
@@ -75,8 +75,6 @@ public class TaintAnalysisProblem : IFDSTabulationProblem
             {
                 targetMethodSymbol = entryPoint.MethodSymbol;
             }
-            // --- REMOVED LOGIC FOR BindingCallbackParameter here ---
-            // We don't seed based on the lambda parameter directly anymore.
 
             if (targetMethodSymbol == null) continue;
 
@@ -116,7 +114,7 @@ public class TaintAnalysisProblem : IFDSTabulationProblem
                 case EntryPointType.ParameterSetter:
                     // Taint comes from the assignment *within* the setter, handled by flow functions.
                     break;
-                case EntryPointType.BindingCallbackParameter:
+                case EntryPointType.BindingCallback:
                     // Taint introduced *within* the lambda body, handled by flow functions using EntryPointInfo.
                     break;
                 case EntryPointType.LifecycleMethod:

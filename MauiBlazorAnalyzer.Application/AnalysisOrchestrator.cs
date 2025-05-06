@@ -87,9 +87,8 @@ public class AnalysisOrchestrator
 
     private async Task<ProjectAnalysisResult> AnalyzeProjectAsync(Project project, Compilation compilation, CancellationToken cancellationToken)
     {
-        var statistics = new ProjectAnalysisStatistics(0,0);
-        
-        // Creating a small set of nodes to start from for testing
+        var statistics = new ProjectAnalysisStatistics(0,0); // TODO: Handle Correctly
+
         var analyzer = new BlazorEntryPointAnalyzer(compilation);
         List<EntryPointInfo> entryPoints = analyzer.FindEntryPoints();
         var taintAnalysisProblem = new TaintAnalysisProblem(project, compilation, entryPoints);
@@ -106,7 +105,7 @@ public class AnalysisOrchestrator
 
         reporter.WriteConsoleReport(Console.Out);
 
-        return new ProjectAnalysisResult([], statistics);
+        return new ProjectAnalysisResult([], statistics); // TODO: Handle Correctly
     }
 
     private async Task<ImmutableArray<AnalysisDiagnostic>> AnalyzeProjectsAsync(

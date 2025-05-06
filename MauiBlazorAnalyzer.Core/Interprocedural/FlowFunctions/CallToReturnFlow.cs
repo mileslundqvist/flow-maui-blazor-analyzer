@@ -1,19 +1,19 @@
-﻿using MauiBlazorAnalyzer.Core.Interprocedural.DB;
+﻿using MauiBlazorAnalyzer.Core.EntryPoints;
+using MauiBlazorAnalyzer.Core.Interprocedural.DB;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Operations;
 
 namespace MauiBlazorAnalyzer.Core.Interprocedural.FlowFunctions;
 internal sealed class CallToReturnFlow : BaseFlowFunction
 {
-    public CallToReturnFlow(ICFGEdge edge, TaintSpecDB dB) : base(edge, dB)
+    public CallToReturnFlow(ICFGEdge edge, TaintSpecDB dB, List<EntryPointInfo> entryPoints) : base(edge, dB, entryPoints)
     {
     }
 
-    public override ISet<TaintFact> ComputeTargets(TaintFact inFactAtCallSite)
+    public override ISet<IFact> ComputeTargets(IFact inFactAtCallSite)
     {
-        if (IsZero(inFactAtCallSite)) return Empty; // Should not be called with ZeroFact
 
-        var outSet = new HashSet<TaintFact> { inFactAtCallSite };
+        var outSet = new HashSet<IFact> { inFactAtCallSite };
        
         return outSet;
     }

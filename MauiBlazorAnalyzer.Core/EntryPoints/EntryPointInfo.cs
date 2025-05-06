@@ -33,11 +33,12 @@ public enum EntryPointType
     EventHandlerMethod,
 
     /// <summary>
-    /// Represents the point where a lambda parameter created by @bind receives its value.
-    /// The EntryPointSymbol will be the IParameterSymbol of the lambda.
-    /// Taint Source: The lambda parameter itself.
+    /// A lambda created by EventCallbackFactory.CreateBinder produced by an @bind directive.
+    /// Taint source: the first parameter of the lambda (value from the UI).
+    /// The taint is assigned to <see cref="AssociatedSymbol"/>.
     /// </summary>
-    BindingCallbackParameter
+    BindingCallback
+
 }
 
 /// <summary>
@@ -99,6 +100,7 @@ public record EntryPointInfo
     /// For JSInvokable methods, lists the parameters considered taint sources.
     /// </summary>
     public IReadOnlyList<IParameterSymbol> TaintedParameters { get; init; } = []; // Primarily for JSInvokable
+    public List<ISymbol>? TaintedVariables { get; set; } // For @bind targets etc.
 
     public override string ToString()
     {

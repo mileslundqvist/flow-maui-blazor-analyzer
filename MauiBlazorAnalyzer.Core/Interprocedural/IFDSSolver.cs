@@ -11,7 +11,7 @@ public class IFDSSolver
     private readonly Dictionary<ExplodedGraphNode, HashSet<ExplodedGraphNode>> _pathEdges = new();
 
     // summary‑edges: (calleeEntry, inFact) -> { outFact }  (cached after first run)
-    private readonly Dictionary<ExplodedGraphNode, HashSet<TaintFact>> _summaryEdges = new();
+    private readonly Dictionary<ExplodedGraphNode, HashSet<IFact>> _summaryEdges = new();
 
     // analysis result map: node -> facts that reach it (excluding ZeroFact)
     private readonly Dictionary<ICFGNode, HashSet<TaintFact>> _results = new();
@@ -67,32 +67,23 @@ public class IFDSSolver
             {
 
                 var targetNode = edge.To;
-                // -- ZeroFact Handling --
-                if (currentFact.Equals(_problem.ZeroValue))
-                {
-                    Propagate(new ExplodedGraphNode(targetNode, currentFact), new ExplodedGraphNode(targetNode, currentFact));
-                    continue; // skip user flow‑functions for ⊥
-                }
-
-                // -- Non‑zero facts (= TaintFact) --
-                var currentTaintFact = (TaintFact)currentFact;
 
                 switch (edge.Type)
                 {
                     case EdgeType.Intraprocedural:
-                        HandleIntraprocedural(edge, currentTaintFact, currentExplodedNode);
+                        HandleIntraprocedural(edge, currentFact, currentExplodedNode);
                         break;
 
                     case EdgeType.Call:
-                        HandleCall(edge, currentTaintFact, currentExplodedNode);
+                        HandleCall(edge, currentFact, currentExplodedNode);
                         break;
 
                     case EdgeType.Return:
-                        HandleReturn(edge, currentTaintFact, currentExplodedNode);
+                        HandleReturn(edge, currentFact, currentExplodedNode);
                         break;
 
                     case EdgeType.CallToReturn:
-                        HandleCallToReturn(edge, currentTaintFact, currentExplodedNode);
+                        HandleCallToReturn(edge, currentFact, currentExplodedNode);
                         break;
                 }
             }
@@ -130,10 +121,10 @@ public class IFDSSolver
     }
 
 
-    private void HandleCallToReturn(ICFGEdge edge, TaintFact currentFact, ExplodedGraphNode currentState)
+    private void HandleCallToReturn(ICFGEdge edge, IFact currentFact, ExplodedGraphNode currentState)
     {
         var normalFlow = _problem.FlowFunctions.GetCallToReturnFlowFunction(edge);
-        var successors = normalFlow?.ComputeTargets(currentFact) ?? Enumerable.Empty<TaintFact>();
+        var successors = normalFlow?.ComputeTargets(currentFact) ?? Enumerable.Empty<IFact>();
 
         var targetNode = edge.To;
         foreach (var successorFact in successors)
@@ -142,10 +133,10 @@ public class IFDSSolver
         }
     }
 
-    private void HandleIntraprocedural(ICFGEdge edge, TaintFact currentFact, ExplodedGraphNode currentState)
+    private void HandleIntraprocedural(ICFGEdge edge, IFact currentFact, ExplodedGraphNode currentState)
     {
         var normalFlow = _problem.FlowFunctions.GetNormalFlowFunction(edge);
-        var successors = normalFlow?.ComputeTargets(currentFact) ?? Enumerable.Empty<TaintFact>();
+        var successors = normalFlow?.ComputeTargets(currentFact) ?? Enumerable.Empty<IFact>();
         var targetNode = edge.To;
 
         foreach (var successorFact in successors)
@@ -156,13 +147,13 @@ public class IFDSSolver
 
 
     // Call edge handling (non-zero facts)
-    private async Task HandleCall(ICFGEdge callEdge, TaintFact callSiteFact, ExplodedGraphNode callSiteState)
+    private async Task HandleCall(ICFGEdge callEdge, IFact callSiteFact, ExplodedGraphNode callSiteState)
     {
         var callSiteNode = callEdge.From;
         var calleeEntryNode = _graph.GetEntryNode(callEdge.To);
 
         var callFlowFunction = _problem.FlowFunctions.GetCallFlowFunction(callEdge);
-        var entryFacts = callFlowFunction?.ComputeTargets(callSiteFact) ?? new HashSet<TaintFact>();
+        var entryFacts = callFlowFunction?.ComputeTargets(callSiteFact) ?? new HashSet<IFact>();
 
         foreach (var entryFact in entryFacts)
         {
@@ -179,7 +170,7 @@ public class IFDSSolver
                     foreach (var exitFact in cachedExitFacts)
                     {
                         var returnFunction = _problem.FlowFunctions.GetReturnFlowFunction(null, callSiteNode);
-                        var returnSiteFacts = returnFunction?.ComputeTargets(exitFact) ?? new HashSet<TaintFact>();
+                        var returnSiteFacts = returnFunction?.ComputeTargets(exitFact) ?? new HashSet<IFact>();
 
                         foreach (var returnFact in returnSiteFacts)
                         {
@@ -210,7 +201,7 @@ public class IFDSSolver
     }
 
     // Return edge handling (non-zero facts)
-    private void HandleReturn(ICFGEdge returnEdge, TaintFact exitFact, ExplodedGraphNode calleeExitState)
+    private void HandleReturn(ICFGEdge returnEdge, IFact exitFact, ExplodedGraphNode calleeExitState)
     {
         var calleeExitNode = returnEdge.From;
         var calleeEntryNode = _graph.GetEntryNode(calleeExitNode);
@@ -291,12 +282,12 @@ public class IFDSSolver
     //    }
     //}
 
-    private void AddSummary(ICFGNode calleeEntry, IFact entryFact, IEnumerable<TaintFact> outFacts)
+    private void AddSummary(ICFGNode calleeEntry, IFact entryFact, IEnumerable<IFact> outFacts)
     {
         var key = new ExplodedGraphNode(calleeEntry, entryFact);
         if (!_summaryEdges.TryGetValue(key, out var set))
         {
-            _summaryEdges[key] = set = new HashSet<TaintFact>();
+            _summaryEdges[key] = set = new HashSet<IFact>();
         }
         set.UnionWith(outFacts);
     }

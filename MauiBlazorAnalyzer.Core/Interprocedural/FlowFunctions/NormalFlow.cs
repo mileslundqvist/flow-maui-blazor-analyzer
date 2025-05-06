@@ -1,66 +1,37 @@
-﻿using MauiBlazorAnalyzer.Core.Interprocedural.DB;
+﻿using MauiBlazorAnalyzer.Core.EntryPoints;
+using MauiBlazorAnalyzer.Core.Interprocedural.DB;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Operations;
 
 namespace MauiBlazorAnalyzer.Core.Interprocedural.FlowFunctions;
 internal sealed class NormalFlow : BaseFlowFunction
 {
-    public NormalFlow(ICFGEdge edge, TaintSpecDB db) : base(edge, db) { }
+    public NormalFlow(ICFGEdge edge, TaintSpecDB db, List<EntryPointInfo> entryPoints) : base(edge, db, entryPoints) { }
 
-    public override ISet<TaintFact> ComputeTargets(TaintFact inFact)
+    public override ISet<IFact> ComputeTargets(IFact inFact)
     {
-        if (IsZero(inFact)) return Empty;
-
+        // Now we need to handle the IFact, because a Taint can be introduced from a source or by being a bind-variable
+        var outFacts = new HashSet<IFact>();
         var operation = Edge.From.Operation;
-        var outSet = new HashSet<TaintFact> { inFact };
+        var containingMethod = Edge.From.MethodContext.MethodSymbol;
 
-        if (inFact.IsReturnValue || inFact.Path is null)
+        bool handledAsBinding = false;
+
+
+        if (operation is ISimpleAssignmentOperation assignmentOp 
+            && containingMethod is not null)
         {
-            return Empty;
+            foreach (var entryPoint in EntryPoints)
+            {
+                if (entryPoint.Type != EntryPointType.BindingCallback || entryPoint.EntryPointSymbol == null || entryPoint.AssociatedSymbol == null)
+                    continue;
+
+                
+            }
         }
 
-        outSet.Add(inFact);
 
-        switch (operation)
-        {
-            case ISimpleAssignmentOperation assign when inFact.AppliesTo(assign.Value):
-                // Propagate taint from the RHS value to the LHS target.
-                if (inFact.AppliesTo(assign.Value))
-                {
-                    var dstSymbol = assign.Target switch
-                    {
-                        ILocalReferenceOperation l => l.Local as ISymbol,
-                        IParameterReferenceOperation p => p.Parameter,
-                        IFieldReferenceOperation f => f.Field,
-                        IPropertyReferenceOperation pr => pr.Property,
-                        _ => null
-                    };
-
-                    if (dstSymbol != null)
-                    {
-                        // Create a new fact rooted at the destination symbol
-                        outSet.Add(inFact.WithNewBase(dstSymbol));
-                    }
-                }
-
-                if (inFact.AppliesTo(assign.Target))
-                {
-                    outSet.Remove(inFact);
-                }
-
-                if (assign.Value is IInvocationOperation inv && DB.IsSanitizer(inv.TargetMethod))
-                {
-
-                    if (inFact.AppliesTo(inv))
-                    {
-                        outSet.Remove(inFact); // Kill the incoming taint if it's sanitized
-                    }
-                    // Also, the sanitizer's *output* should not be tainted unless it's a source/passthrough sanitizer.
-                    // This is handled by the ReturnFlow of the sanitizer call (if it's analyzed)
-                    // or the definition of the sanitizer source/passthrough in TaintSpecDB.
-                }
-                break;
-        }
-        return outSet;
+        
+        return outFacts;
     }
 }
