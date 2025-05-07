@@ -29,6 +29,12 @@ internal sealed class NormalFlow : BaseFlowFunction
             PropagateOrKillIncomingTaint(currentTaintFact, operation, outFacts);
         }
 
+        if (!outFacts.Any())
+        {
+            outFacts.Add(inFact);
+           
+        }
+
         return outFacts;
     }
 
@@ -72,22 +78,26 @@ internal sealed class NormalFlow : BaseFlowFunction
         {
             if (entryPoint.Type != EntryPointType.BindingCallback || entryPoint.EntryPointSymbol == null || entryPoint.AssociatedSymbol == null)
                 continue;
+      
+            var assignmentValueSymbol = GetOperationSymbol(assignmentOp.Value);
+            var assignmentTargetSymbol = GetOperationSymbol(assignmentOp.Target);
 
-            // Check if the current method matches the lambda symbol from the entry point
-            if (SymbolEqualityComparer.Default.Equals(containingMethod.OriginalDefinition, entryPoint.EntryPointSymbol.OriginalDefinition))
+            if (assignmentTargetSymbol != null && SymbolEqualityComparer.Default.Equals(assignmentValueSymbol, entryPoint.AssociatedSymbol))
             {
-                var assignmentTargetSymbol = GetOperationSymbol(assignmentOp.Target);
-                if (assignmentTargetSymbol != null && SymbolEqualityComparer.Default.Equals(assignmentTargetSymbol, entryPoint.AssociatedSymbol))
-                {
-                    // FOUND BINDING ASSIGNMENT: Generate NEW taint for the AssociatedSymbol
-                    var path = new AccessPath(entryPoint.AssociatedSymbol, ImmutableArray<IFieldSymbol>.Empty);
-                    var newTaintFact = new TaintFact(path);
-                    outFacts.Add(newTaintFact);
+                // FOUND BINDING ASSIGNMENT: Generate NEW taint for the symbols
+                var targetPath = new AccessPath(assignmentTargetSymbol, ImmutableArray<IFieldSymbol>.Empty);
+                var targetTaintFact = new TaintFact(targetPath);
+                outFacts.Add(targetTaintFact);
 
-                    // Found the specific assignment, no need to check other entry points for this operation
-                    return;
-                }
+
+                var boundVariablePath = new AccessPath(assignmentTargetSymbol, ImmutableArray<IFieldSymbol>.Empty);
+                var boundTaintFact = new TaintFact(boundVariablePath);
+                outFacts.Add(boundTaintFact);
+
+                // Found the specific assignment, no need to check other entry points for this operation
+                return;
             }
+            
         }
     }
 
@@ -108,7 +118,6 @@ internal sealed class NormalFlow : BaseFlowFunction
                     var path = new AccessPath(targetSymbol, ImmutableArray<IFieldSymbol>.Empty);
                     outFacts.Add(new TaintFact(path));
                 }
-                // else: Taint is lost if assignment target is complex/unhandled
             }
             else
             {
@@ -152,7 +161,7 @@ internal sealed class NormalFlow : BaseFlowFunction
             // This check might need refinement based on AccessPath (e.g., field access)
             if (targetSymbol != null && currentTaintFact.Path?.Base != null &&
                 SymbolEqualityComparer.Default.Equals(targetSymbol, currentTaintFact.Path.Base) &&
-                currentTaintFact.Path.Fields.IsEmpty) // Only kill if it's the base symbol being overwritten
+                currentTaintFact.Path.Fields.IsEmpty)
             {
                 return true; // Taint of the variable being assigned is killed
             }
