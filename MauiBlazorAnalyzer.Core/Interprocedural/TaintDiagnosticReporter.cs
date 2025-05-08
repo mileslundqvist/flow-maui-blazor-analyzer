@@ -51,18 +51,27 @@ public sealed class TaintDiagnosticReporter
                     
                     foreach (TaintFact fact in facts)
                     {
-                        if (fact?.Path?.Base != null && contributingSymbols.Contains(fact.Path.Base))
-                        {
-                            // Match found!
-                            var trace = BuildOneTrace(new ExplodedGraphNode(node, fact));
+                        if (fact?.Path?.Base == null) break;
 
-                            yield return new TaintFinding(
-                                Sink: inv.TargetMethod,
-                                ArgIndex: i,
-                                SinkNode: node,
-                                Fact: fact,
-                                Trace: trace);
-                            break;
+                        foreach (var contributingSymbol in contributingSymbols)
+                        {
+                            // TODO: Fix better handling of comparison, for some reason SymbolEqualityComparer is returning
+                            // false for seamingly the same symbols. A bit hacky solution currenntly.
+                            var contributingString = contributingSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                            var factString = fact.Path.Base.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+                            if (contributingString.Equals(factString))
+                            {
+                                // Match found!
+                                var trace = BuildOneTrace(new ExplodedGraphNode(node, fact));
+
+                                yield return new TaintFinding(
+                                    Sink: inv.TargetMethod,
+                                    ArgIndex: i,
+                                    SinkNode: node,
+                                    Fact: fact,
+                                    Trace: trace);
+                                break;
+                            }
                         }
                     }
                 }
@@ -273,7 +282,7 @@ public sealed class TaintDiagnosticReporter
     // Overload to start the process
     private HashSet<ISymbol> FindContributingBaseSymbols(IOperation operation)
     {
-        var symbols = new HashSet<ISymbol>(SymbolEqualityComparer.Default);
+        var symbols = new HashSet<ISymbol>(SymbolEqualityComparer.IncludeNullability);
         FindContributingBaseSymbols(operation, symbols);
         return symbols;
     }

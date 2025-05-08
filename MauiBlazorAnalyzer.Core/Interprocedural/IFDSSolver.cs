@@ -248,39 +248,7 @@ public class IFDSSolver
         }
     }
 
-    //private IEnumerable<ExplodedGraphNode> FindEntryStatesForExitState(ExplodedGraphNode exitState)
-    //{
-    //    var (exitNode, exitFact) = exitState;
-    //    var entryNode = _graph.GetEntryNode(exitNode);
-    //    if (entryNode == null) yield break;
 
-    //    var visited = new HashSet<ExplodedGraphNode>();
-    //    var queue = new Queue<ExplodedGraphNode>();
-
-    //    queue.Enqueue(exitState);
-    //    visited.Add(exitState);
-
-    //    while (queue.Count > 0)
-    //    {
-    //        var currentState = queue.Dequeue();
-    //        if (currentState.Node.Equals(entryNode))
-    //        {
-    //            yield return currentState;
-    //            continue;
-    //        }
-
-    //        if (_pathEdges.TryGetValue(currentState, out var predecessrs))
-    //        {
-    //            foreach (var predecessorState in predecessrs)
-    //            {
-    //                if (predecessorState.Node.MethodContext.Equals(exitNode.MethodContext) && visited.Add(predecessorState))
-    //                {
-    //                    queue.Enqueue(predecessorState);
-    //                }
-    //            }
-    //        }
-    //    }
-    //}
 
     private void AddSummary(ICFGNode calleeEntry, IFact entryFact, IEnumerable<IFact> outFacts)
     {
