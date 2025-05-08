@@ -70,7 +70,7 @@ public sealed class TaintDiagnosticReporter
                                     SinkNode: node,
                                     Fact: fact,
                                     Trace: trace);
-                                break;
+                                //goto NextArgument;
                             }
                         }
                     }
