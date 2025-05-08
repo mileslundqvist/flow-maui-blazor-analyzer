@@ -2,6 +2,7 @@
 using MauiBlazorAnalyzer.Core.Interprocedural.DB;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Operations;
+using System.Collections.Immutable;
 
 namespace MauiBlazorAnalyzer.Core.Interprocedural.FlowFunctions;
 internal sealed class CallFlow : BaseFlowFunction
@@ -24,20 +25,6 @@ internal sealed class CallFlow : BaseFlowFunction
     {
         var outFacts = new HashSet<IFact>();
 
-        // --- Step 1: Handle Non-Taint or Non-Propagatable Facts ---
-        // If input is ZeroFact, or if it's ReturnValue taint from the caller,
-        // it doesn't map to callee parameters. Output is empty set (representing ZeroFact).
-        if (inFactAtCallSite is ZeroFact ||
-            (inFactAtCallSite is TaintFact tf && tf.IsReturnValue))
-        {
-            return outFacts;
-        }
-
-        // --- Step 2: We must have a valid TaintFact to proceed ---
-        if (inFactAtCallSite is not TaintFact currentTaintFact || currentTaintFact == null)
-        {
-            return outFacts;
-        }
 
         // --- Step 3: Extract Call Information from the Call Site Operation ---
         if (!TryGetCallInfo(Edge.From.Operation, out var calleeMethod, out var arguments))
@@ -48,7 +35,7 @@ internal sealed class CallFlow : BaseFlowFunction
         // --- Step 4: Map Tainted Arguments to Callee Parameters ---
         // Check if the incoming taint fact applies to any of the actual argument values.
         // If yes, create a new fact for the corresponding formal parameter.
-        MapTaintedArgumentsToParameters(currentTaintFact, arguments, outFacts);
+        MapTaintedArgumentsToParameters(inFactAtCallSite, arguments, outFacts);
 
 
         //// Introduce taint if the callee is a source
@@ -100,9 +87,19 @@ internal sealed class CallFlow : BaseFlowFunction
                 calleeMethod = assignObj.Constructor;
                 arguments = assignObj.Arguments;
                 return calleeMethod != null;
-
             // TODO: Add other relevant patterns if needed (e.g., call within ExpressionStatementSyntax?)
+            case IExpressionStatementOperation expressionStatement:
+                switch (expressionStatement.Operation)
+                {
+                    case IInvocationOperation exprInv:
+                        calleeMethod = exprInv.TargetMethod;
+                        arguments = exprInv.Arguments;
+                        return calleeMethod != null;
+                    default: 
+                        return false;
+                }
 
+                break;
             default:
                 return false; // Operation is not a recognized call pattern
         }
@@ -112,17 +109,59 @@ internal sealed class CallFlow : BaseFlowFunction
     /// Maps the incoming taint fact (representing a tainted argument value at the call site)
     /// to the corresponding callee parameter(s), adding new TaintFacts for the parameters to the output set.
     /// </summary>
-    private void MapTaintedArgumentsToParameters(TaintFact callSiteTaintFact, IEnumerable<IArgumentOperation> arguments, ISet<IFact> outFacts)
+    private void MapTaintedArgumentsToParameters(IFact callSiteFact, IEnumerable<IArgumentOperation> arguments, ISet<IFact> outFacts)
     {
         foreach (var arg in arguments)
         {
-            // Does the incoming fact represent the value passed to this specific argument?
-            // And does this argument map to a formal parameter?
-            if (arg.Parameter != null && callSiteTaintFact.AppliesTo(arg.Value))
+           
+            if (callSiteFact is TaintFact callSiteTaintFact)
             {
-                // Yes: Create a new fact representing the *parameter* being tainted.
-                outFacts.Add(callSiteTaintFact.WithNewBase(arg.Parameter));
+                // Does the incoming fact represent the value passed to this specific argument?
+                // And does this argument map to a formal parameter?
+                if (arg.Parameter != null && callSiteTaintFact.AppliesTo(arg.Value))
+                {
+                    // Yes: Create a new fact representing the *parameter* being tainted.
+                    outFacts.Add(callSiteTaintFact.WithNewBase(arg.Parameter));
+                }
+            }
+            else
+            {
+                // Is the ZeroFact actually a bound-variable in disguise?
+                foreach (var entryPoint in EntryPoints)
+                {
+                    if (entryPoint.Type != EntryPointType.BindingCallback || entryPoint.EntryPointSymbol == null || entryPoint.AssociatedSymbol == null)
+                        continue;
+
+                    var valueSymbol = GetOperationSymbol(arg.Value);
+
+                    if (arg.Parameter != null 
+                        && valueSymbol != null 
+                        && SymbolEqualityComparer.Default.Equals(valueSymbol, entryPoint.AssociatedSymbol))
+                    {
+                        var targetPath = new AccessPath(arg.Parameter, ImmutableArray<IFieldSymbol>.Empty);
+                        var targetTaintFact = new TaintFact(targetPath);
+                        outFacts.Add(targetTaintFact);
+                    }
+                }
             }
         }
+    }
+
+    /// <summary>
+    /// Helper to get the base ISymbol from common reference operations.
+    /// </summary>
+    private ISymbol? GetOperationSymbol(IOperation operation)
+    {
+        while (operation is IConversionOperation conv) { operation = conv.Operand; }
+
+        return operation switch
+        {
+            ILocalReferenceOperation loc => loc.Local,
+            IParameterReferenceOperation parm => parm.Parameter,
+            IFieldReferenceOperation fld => fld.Field,
+            IPropertyReferenceOperation prop => prop.Property, // Usually the property symbol itself
+            IInstanceReferenceOperation => null, // 'this' usually isn't the root of taint path directly
+            _ => null // Cannot determine symbol for other operation types
+        };
     }
 }
