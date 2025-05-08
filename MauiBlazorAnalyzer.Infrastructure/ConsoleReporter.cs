@@ -48,7 +48,7 @@ public class ConsoleReporter : IReporter
 
     private static void PrintDiagnostics(AnalysisResult result, CancellationToken cancellationToken)
     {
-        Console.WriteLine("\n[VULNERABILITIES DETECTED]");
+        Console.WriteLine("\n[POTENTIAL VULNERABILITIES DETECTED]");
         Console.WriteLine("───────────────────────────");
 
         // Group by file for better readability might still be useful if many diagnostics overall,
