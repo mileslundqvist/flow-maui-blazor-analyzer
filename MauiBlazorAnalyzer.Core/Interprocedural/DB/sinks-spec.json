@@ -34,6 +34,8 @@
     "Microsoft.Maui.ApplicationModel.IClipboard.SetTextAsync(System.String)",
     "Microsoft.JSInterop.IJSRuntime.InvokeAsync<TValue>(System.String, System.Object[])",
     "Microsoft.JSInterop.IJSRuntime.InvokeVoidAsync<TValue>(System.String, System.Object[])",
+    "Microsoft.JSInterop.JSRuntimeExtensions.InvokeAsync<TValue>(Microsoft.JSInterop.IJSRuntime, System.String, params System.Object[])",
+    "Microsoft.JSInterop.JSRuntimeExtensions.InvokeVoidAsync<TValue>(Microsoft.JSInterop.IJSRuntime, System.String, params System.Object[])",
     "SQLite.SQLiteConnection.Execute(System.String, System.Object[])",
     "SQLite.SQLiteAsyncConnection.ExecuteAsync(System.String, System.Object[])",
     "System.Data.Common.DbCommand.ExecuteNonQuery()",

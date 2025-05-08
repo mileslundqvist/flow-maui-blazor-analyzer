@@ -247,9 +247,6 @@ public class IFDSSolver
             }
         }
     }
-
-
-
     private void AddSummary(ICFGNode calleeEntry, IFact entryFact, IEnumerable<IFact> outFacts)
     {
         var key = new ExplodedGraphNode(calleeEntry, entryFact);

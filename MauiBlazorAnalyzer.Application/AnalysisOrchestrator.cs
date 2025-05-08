@@ -98,14 +98,14 @@ public class AnalysisOrchestrator
 
         var reporter = new TaintDiagnosticReporter(result, taintAnalysisProblem.Graph);
 
-        foreach (AnalysisDiagnostic d in reporter.ToDiagnostics())
-        {
-            Console.WriteLine($"{d.Severity}: {d.Message} @ {d.FilePath}:{d.Location.StartLinePosition.Line + 1}");
-        }
+        //foreach (AnalysisDiagnostic d in reporter.ToDiagnostics())
+        //{
+        //    Console.WriteLine($"{d.Severity}: {d.Message} @ {d.FilePath}:{d.Location.StartLinePosition.Line + 1}");
+        //}
+        var diagnostics = reporter.ToDiagnostics();
 
-        reporter.WriteConsoleReport(Console.Out);
 
-        return new ProjectAnalysisResult([], statistics); // TODO: Handle Correctly
+        return new ProjectAnalysisResult(diagnostics.ToImmutableArray(), statistics); // TODO: Handle Correctly
     }
 
     private async Task<ImmutableArray<AnalysisDiagnostic>> AnalyzeProjectsAsync(

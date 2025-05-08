@@ -16,75 +16,99 @@ public class ConsoleReporter : IReporter
 
     public Task ReportAsync(AnalysisResult result, AnalysisOptions options, CancellationToken cancellationToken = default)
     {
-        Console.WriteLine("\n--- Analysis Report ---");
+        Console.WriteLine("\n═══════════════════════════════════════════════════");
+        Console.WriteLine("               TAINT ANALYSIS REPORT               ");
+        Console.WriteLine("═══════════════════════════════════════════════════");
+
 
         if (!result.Succeeded)
         {
             Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"Analysis Failed: {result.ErrorMessage}");
+            Console.WriteLine($"\n[ANALYSIS FAILED]: {result.ErrorMessage}");
             Console.ResetColor();
         }
 
-        PrintAnalysisReport(result);
+        PrintAnalysisStatistics(result); // Renamed for clarity
 
         if (result.Diagnostics.Any())
         {
-            PrintDiagnostics(result, cancellationToken);
+            PrintDiagnostics(result, cancellationToken); // Renamed for clarity
         }
         else if (result.Succeeded)
         {
-            Console.WriteLine("\nNo issues found matching the criteria.");
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine("\n✅ No taint vulnerabilities found matching the criteria.");
+            Console.ResetColor();
         }
 
-        Console.WriteLine("\n--- End Report ---");
-        _logger.LogInformation("Console report generated.");
+        Console.WriteLine("\n--- End of Taint Analysis Report ---");
+        _logger.LogInformation("Console report generated for taint analysis.");
         return Task.CompletedTask;
     }
 
     private static void PrintDiagnostics(AnalysisResult result, CancellationToken cancellationToken)
     {
-        Console.WriteLine("\n[Diagnostics]");
-        // Group by file for better readability
-        var groupedDiagnostics = result.Diagnostics
-                                    .OrderBy(d => d.FilePath ?? string.Empty)
-                                    .ThenBy(d => d.Location.StartLinePosition.Line)
-                                    .ThenBy(d => d.Location.StartLinePosition.Character)
-                                    .GroupBy(d => d.FilePath ?? "General");
+        Console.WriteLine("\n[VULNERABILITIES DETECTED]");
+        Console.WriteLine("───────────────────────────");
 
-        foreach (var group in groupedDiagnostics)
+        // Group by file for better readability might still be useful if many diagnostics overall,
+        // but for taint, each diagnostic message is now quite long and self-contained.
+        // Let's print them sequentially, ordered by severity then file/line.
+
+        var sortedDiagnostics = result.Diagnostics
+            .OrderByDescending(d => d.Severity) // Show errors/warnings first
+            .ThenBy(d => d.FilePath ?? string.Empty)
+            .ThenBy(d => d.Location.StartLinePosition.Line)
+            .ThenBy(d => d.Location.StartLinePosition.Character);
+
+        int findingCount = 0;
+        foreach (var diag in sortedDiagnostics)
         {
-            Console.WriteLine($"\n  File: {group.Key}");
-            foreach (var diag in group)
+            findingCount++;
+            cancellationToken.ThrowIfCancellationRequested();
+
+            Console.WriteLine($"\n--- Finding #{findingCount} ---");
+
+            string severityString = diag.Severity.ToString().ToUpperInvariant();
+            ConsoleColor color = diag.Severity switch
             {
-                cancellationToken.ThrowIfCancellationRequested();
+                DiagnosticSeverity.Error => ConsoleColor.Red,
+                DiagnosticSeverity.Warning => ConsoleColor.Yellow,
+                DiagnosticSeverity.Info => ConsoleColor.Cyan,
+                _ => Console.ForegroundColor
+            };
 
-                string severityString = diag.Severity.ToString().ToUpperInvariant();
-                ConsoleColor color = diag.Severity switch
-                {
-                    DiagnosticSeverity.Error => ConsoleColor.Red,
-                    DiagnosticSeverity.Warning => ConsoleColor.Yellow,
-                    DiagnosticSeverity.Info => ConsoleColor.Cyan,
-                    _ => Console.ForegroundColor
-                };
+            Console.ForegroundColor = color;
+            Console.Write($"{severityString} [{diag.Id}]");
+            Console.ResetColor();
+            Console.WriteLine($" at {diag.Location.Path}({diag.Location.StartLinePosition.Line + 1},{diag.Location.StartLinePosition.Character + 1})");
+            Console.WriteLine($"  Title: {diag.Title}");
 
-                Console.Write($"    {diag.Location.Path}({diag.Location.StartLinePosition.Line + 1},{diag.Location.StartLinePosition.Character + 1}): ");
-                Console.ForegroundColor = color;
-                Console.Write($"{severityString} {diag.Id}");
-                Console.ResetColor();
-                Console.Write($": {diag.Title} - {diag.Message}");
-                if (!string.IsNullOrEmpty(diag.HelpLink)) Console.Write($" [{diag.HelpLink}]");
-                Console.WriteLine();
+            // The message is now multi-line and contains the detailed trace.
+            // Indent the message slightly for better structure under the title.
+            Console.ForegroundColor = ConsoleColor.Gray; // Subtle color for the detailed message body
+            // Split the message by lines and print each one indented
+            var messageLines = diag.Message.Split(new[] { Environment.NewLine }, StringSplitOptions.None);
+            foreach (var line in messageLines)
+            {
+                Console.WriteLine($"  {line}");
             }
+            Console.ResetColor();
+
+            if (!string.IsNullOrEmpty(diag.HelpLink)) Console.WriteLine($"  Help: {diag.HelpLink}");
+            Console.WriteLine("----------------------");
         }
     }
 
-    private static void PrintAnalysisReport(Core.Analysis.AnalysisResult result)
+    private static void PrintAnalysisStatistics(Core.Analysis.AnalysisResult result)
     {
-        Console.WriteLine("\n[Statistics]");
+        Console.WriteLine("\n[Analysis Statistics]");
+        Console.WriteLine("─────────────────────");
         Console.WriteLine($"- Analysis Duration: {result.Statistics.AnalysisDuration}");
-        Console.WriteLine($"- Total Files Analyzed: {result.Statistics.TotalFilesAnalyzed}");
-        Console.WriteLine($"- C# Files Analyzed: {result.Statistics.CSharpFilesAnalyzed}");
-        Console.WriteLine($"- Razor Files Analyzed: {result.Statistics.RazorFilesAnalyzed}");
-        Console.WriteLine($"- Diagnostics Found (meeting severity): {result.Diagnostics.Length}");
+        // Assuming these might be added back or are relevant:
+        // Console.WriteLine($"- Total Files Analyzed: {result.Statistics.TotalFilesAnalyzed}");
+        // Console.WriteLine($"- C# Files Analyzed: {result.Statistics.CSharpFilesAnalyzed}");
+        // Console.WriteLine($"- Razor Files Analyzed: {result.Statistics.RazorFilesAnalyzed}");
+        Console.WriteLine($"- Vulnerabilities Found: {result.Diagnostics.Length}");
     }
 }

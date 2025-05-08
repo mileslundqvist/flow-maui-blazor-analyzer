@@ -2,6 +2,8 @@
 using Microsoft.CodeAnalysis.Operations;
 using Microsoft.CodeAnalysis;
 using MauiBlazorAnalyzer.Core.Analysis;
+using System.Collections.Immutable;
+using System.Text;
 
 namespace MauiBlazorAnalyzer.Core.Interprocedural;
 
@@ -62,19 +64,20 @@ public sealed class TaintDiagnosticReporter
                             if (contributingString.Equals(factString))
                             {
                                 // Match found!
-                                var trace = BuildOneTrace(new ExplodedGraphNode(node, fact));
+                                var trace = BuildTrace(new ExplodedGraphNode(node, fact));
 
                                 yield return new TaintFinding(
                                     Sink: inv.TargetMethod,
                                     ArgIndex: i,
                                     SinkNode: node,
                                     Fact: fact,
-                                    Trace: trace);
-                                //goto NextArgument;
+                                    Trace: trace.ToImmutableList());
+                                break;
                             }
                         }
                     }
                 }
+
             }
         }
     }
@@ -86,89 +89,156 @@ public sealed class TaintDiagnosticReporter
     /// </summary>
     public IEnumerable<AnalysisDiagnostic> ToDiagnostics(string ruleId = "TAINT0001")
     {
-        int seq = 0;
-        foreach (TaintFinding f in GetFindings())
+        return GetFindings().Select(finding =>
         {
-            var loc = f.SinkNode.Operation?.Syntax.GetLocation();
-            FileLinePositionSpan span = (loc is null)
-                ? new FileLinePositionSpan("Unknown", default, default)
-                : loc.GetLineSpan();
+            Location? diagnosticLocation = finding.SinkNode.Operation?.Syntax.GetLocation() ??
+                                          finding.SinkNode.MethodContext.MethodSymbol.Locations.FirstOrDefault();
 
-            string msg =
-                $"Tainted data flows into sink '{f.Sink.ToDisplayString()}' " +
-                $"(argument #{f.ArgIndex}).";
+            FileLinePositionSpan span = diagnosticLocation?.GetLineSpan() ?? new FileLinePositionSpan("Unknown", default, default);
 
-            yield return new AnalysisDiagnostic(
-                id: ruleId,
-                title: "Tainted value passed to sink",
-                message: msg,
-                severity: DiagnosticSeverity.Warning,
-                location: span,
-                helpLink: "https://OWASP.org/www-community/vulnerabilities"
-            );
-            seq++;
-        }
-    }
+            var messageBuilder = new StringBuilder();
+            var sinkMethodDisplay = finding.Sink.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat);
+            var sinkParameterName = finding.Sink.Parameters.Length > finding.ArgIndex ?
+                                    finding.Sink.Parameters[finding.ArgIndex].Name :
+                                    $"#{finding.ArgIndex}";
 
+            messageBuilder.AppendLine($"Taint vulnerability detected!");
+            messageBuilder.AppendLine($"  Description: Tainted data flows into argument '{sinkParameterName}' (index {finding.ArgIndex}) of sink method '{sinkMethodDisplay}'.");
+            messageBuilder.AppendLine($"  Sink Location: {PrettyLocation(finding.SinkNode, true)}"); // Verbose for sink
 
-    public void WriteConsoleReport(TextWriter writer)
-    {
-        foreach (TaintFinding f in GetFindings())
-        {
-            writer.WriteLine("────────────────────────────────────────────────────");
-            writer.WriteLine($"Sink      : {f.Sink.ToDisplayString()}  (arg #{f.ArgIndex})");
-            writer.WriteLine($"Location  : {PrettyLocation(f.SinkNode)}");
-            writer.WriteLine($"Taint fact: {f.Fact}");
-            writer.WriteLine("Trace:");
-            foreach (var step in f.Trace)
+            string sinkOperationSyntax = finding.SinkNode.Operation?.Syntax.ToString().Trim() ?? GetNodeKindDescription(finding.SinkNode);
+            sinkOperationSyntax = System.Text.RegularExpressions.Regex.Replace(sinkOperationSyntax, @"\s+", " ");
+            if (sinkOperationSyntax.Length > 120) sinkOperationSyntax = sinkOperationSyntax.Substring(0, 117) + "...";
+            messageBuilder.AppendLine($"  Sink Operation: {sinkOperationSyntax}");
+
+            ExplodedGraphNode? sourceExplodedNode = finding.Trace.FirstOrDefault();
+            IFact? initialTaintSourceFact = sourceExplodedNode?.Fact;
+
+            if (initialTaintSourceFact != null)
             {
-                writer.WriteLine($"   ↳ {PrettyLocation(step.Node)} | {step.Fact}");
+                messageBuilder.AppendLine($"  Original Taint: {initialTaintSourceFact.ToString()}"); // Relies on IFact.ToString()
+                if (sourceExplodedNode != null)
+                {
+                    messageBuilder.AppendLine($"     at Location: {PrettyLocation(sourceExplodedNode?.Node)}");
+                }
             }
-            writer.WriteLine();
-        }
+            else
+            {
+                messageBuilder.AppendLine($"  Tainted Value: {finding.Fact.ToString()} (direct info at sink, trace may be empty or start differently)");
+            }
+
+            messageBuilder.AppendLine("\n  Taint Propagation Trace:");
+            if (!finding.Trace.Any())
+            {
+                messageBuilder.AppendLine("    No detailed trace available (or source is the sink itself).");
+            }
+            else
+            {
+                for (int i = 0; i < finding.Trace.Count; i++)
+                {
+                    ExplodedGraphNode step = finding.Trace[i];
+                    string stepLocation = PrettyLocation(step.Node);
+                    string operationSyntax = step.Node.Operation?.Syntax.ToString().Trim() ?? GetNodeKindDescription(step.Node);
+                    operationSyntax = System.Text.RegularExpressions.Regex.Replace(operationSyntax, @"\s+", " ");
+                    if (operationSyntax.Length > 100) operationSyntax = operationSyntax.Substring(0, 97) + "...";
+
+                    string factInfo = $"({step.Fact.ToString()})"; // Use IFact.ToString() which TaintFact/ZeroFact implement
+
+                    string stepPrefix;
+                    if (i == 0) stepPrefix = "    [SOURCE] ";
+                    // Check if this step's node is the same as the overall finding's SinkNode
+                    else if (i == finding.Trace.Count - 1 && step.Node.Equals(finding.SinkNode)) stepPrefix = "    [SINK]   ";
+                    else stepPrefix = "    [THROUGH]";
+
+                    messageBuilder.AppendLine($"{stepPrefix}[{stepLocation}] -> {operationSyntax} {factInfo}");
+                }
+            }
+
+            return new AnalysisDiagnostic(
+                id: ruleId,
+                title: "Tainted Value Reaches Sink",
+                message: messageBuilder.ToString(),
+                severity: DiagnosticSeverity.Warning,
+                location: span);
+        });
     }
 
-    private static ISymbol? GetBaseSymbol(IOperation op) => op switch
+    private static string GetNodeKindDescription(ICFGNode node)
     {
-        ILocalReferenceOperation l => l.Local,
-        IParameterReferenceOperation p => p.Parameter,
-        IFieldReferenceOperation f => f.Member,
-        IPropertyReferenceOperation pr => pr.Property,
-        //IInterpolatedStringOperation iso => iso.
-        _ => null
-    };
-
-    private static string PrettyLocation(ICFGNode n)
-    {
-        if (n.Operation?.Syntax is { } syn)
+        return node.Kind switch
         {
-            var span = syn.SyntaxTree.GetLineSpan(syn.Span);
-            return $"{Path.GetFileName(span.Path)}:{span.StartLinePosition.Line + 1}";
-        }
-        return "<unknown>";
+            ICFGNodeKind.Entry => $"Entry to method {node.MethodContext.MethodSymbol.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)}",
+            ICFGNodeKind.Exit => $"Exit from method {node.MethodContext.MethodSymbol.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)}",
+            ICFGNodeKind.CallSite => $"Call-site in {node.MethodContext.MethodSymbol.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)}",
+            ICFGNodeKind.ReturnSite => $"Return-site in {node.MethodContext.MethodSymbol.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)}",
+            ICFGNodeKind.Normal => "Intermediate operation",
+            _ => "Unknown node kind",
+        };
     }
 
-    private IReadOnlyList<ExplodedGraphNode> BuildOneTrace(ExplodedGraphNode start)
+    private ImmutableList<ExplodedGraphNode> BuildTrace(ExplodedGraphNode start)
     {
-        var trace = new List<ExplodedGraphNode> { start };
-        var seen = new HashSet<ExplodedGraphNode> { start };
+        var trace = ImmutableList.CreateBuilder<ExplodedGraphNode>();
+        var visited = new HashSet<ExplodedGraphNode>();
+        var current = start;
 
-        var cur = start;
-        while (_result.PathEdges.TryGetValue(cur, out var preds) && preds.Count > 0)
+        while (visited.Add(current))
         {
-            // Take *one* predecessor (arbitrary but deterministic).
-            var next = preds.OrderBy(p => p.Node.GetHashCode()).First();
+            trace.Add(current);
+            if (current.Fact is ZeroFact) break;
 
-            if (!seen.Add(next)) break; // safety – cycle
-            trace.Add(next);
-
-            if (next.Fact is ZeroFact) break; // reached seed
-            cur = next;
+            if (_result.PathEdges.TryGetValue(current, out var predecessors) && predecessors.Any())
+            {
+                // Prioritize based on operation syntax location if available and different
+                var next = predecessors
+                    .OrderBy(p => p.Node.Operation?.Syntax?.GetLocation().SourceSpan.Start)
+                    .ThenBy(p => p.Node.GetHashCode()) // Fallback for determinism
+                    .FirstOrDefault();
+                current = next;
+            }
         }
+
         trace.Reverse();
-        return trace;
+        return trace.ToImmutable();
     }
 
+    private static string PrettyLocation(ICFGNode n, bool verbose = false)
+    {
+        string? filePath = null;
+        FileLinePositionSpan lineSpan = default;
+        bool hasSpecificSyntaxLocation = false;
+
+        Location? nodeLocation = n.Operation?.Syntax.GetLocation();
+        if (nodeLocation == null || !nodeLocation.IsInSource)
+        {
+            nodeLocation = n.MethodContext.MethodSymbol.Locations.FirstOrDefault(loc => loc.IsInSource);
+        }
+
+        if (nodeLocation != null && nodeLocation.IsInSource)
+        {
+            lineSpan = nodeLocation.GetLineSpan();
+            filePath = lineSpan.Path;
+            if (n.Operation?.Syntax != null) // It's specific if it came from an operation
+            {
+                hasSpecificSyntaxLocation = true;
+            }
+        }
+
+        var fileName = !string.IsNullOrEmpty(filePath) ? Path.GetFileName(filePath) : "UnknownFile";
+        var lineNum = lineSpan.StartLinePosition.Line + 1; // 1-based line number
+
+        var locationStr = $"{fileName}:L{lineNum}";
+
+        if (verbose || !hasSpecificSyntaxLocation)
+        {
+            locationStr += $" (In Method: {n.MethodContext.MethodSymbol.ToDisplayString(SymbolDisplayFormat.MinimallyQualifiedFormat)}, Kind: {n.Kind})";
+        }
+        else if (verbose && hasSpecificSyntaxLocation) // If already specific but verbose, add Kind
+        {
+            locationStr += $" (Kind: {n.Kind})";
+        }
+        return locationStr;
+    }
 
     private void FindContributingBaseSymbols(IOperation? operation, HashSet<ISymbol> collectedSymbols, int depth = 0)
     {
