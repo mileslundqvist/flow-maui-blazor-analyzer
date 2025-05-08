@@ -370,7 +370,8 @@ public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
         else
         {
             if (operation is IInvocationOperation ||
-                (operation is ISimpleAssignmentOperation assignOp && assignOp.Value is IInvocationOperation) ||
+                (operation is ISimpleAssignmentOperation assignOp && 
+                (assignOp.Value is IInvocationOperation || assignOp.Value is IAwaitOperation)) ||
                 (operation is IExpressionStatementOperation exprOp && (exprOp.Operation is IInvocationOperation || 
                 (exprOp.Operation is ISimpleAssignmentOperation innerAssignOp && innerAssignOp.Value is IInvocationOperation))))
             {
