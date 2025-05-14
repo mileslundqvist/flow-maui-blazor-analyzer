@@ -2,6 +2,5 @@
 
 namespace MauiBlazorAnalyzer.Core.Analysis;
 public record ProjectAnalysisResult(
-        ImmutableArray<AnalysisDiagnostic> Diagnostics,
-        ProjectAnalysisStatistics Statistics
+        ImmutableArray<AnalysisDiagnostic> Diagnostics
     );

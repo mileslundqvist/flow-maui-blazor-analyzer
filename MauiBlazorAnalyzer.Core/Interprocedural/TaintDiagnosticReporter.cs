@@ -58,7 +58,7 @@ public sealed class TaintDiagnosticReporter
                         foreach (var contributingSymbol in contributingSymbols)
                         {
                             // TODO: Fix better handling of comparison, for some reason SymbolEqualityComparer is returning
-                            // false for seamingly the same symbols. A bit hacky solution currenntly.
+                            // false for seamingly the same symbols. A bit hacky solution currently.
                             var contributingString = contributingSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
                             var factString = fact.Path.Base.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
                             if (contributingString.Equals(factString))

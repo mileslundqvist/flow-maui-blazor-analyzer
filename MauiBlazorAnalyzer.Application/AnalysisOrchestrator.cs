@@ -87,7 +87,6 @@ public class AnalysisOrchestrator
 
     private async Task<ProjectAnalysisResult> AnalyzeProjectAsync(Project project, Compilation compilation, CancellationToken cancellationToken)
     {
-        var statistics = new ProjectAnalysisStatistics(0,0); // TODO: Handle Correctly
 
         var analyzer = new BlazorEntryPointAnalyzer(compilation);
         List<EntryPointInfo> entryPoints = analyzer.FindEntryPoints();
@@ -105,7 +104,7 @@ public class AnalysisOrchestrator
         var diagnostics = reporter.ToDiagnostics();
 
 
-        return new ProjectAnalysisResult(diagnostics.ToImmutableArray(), statistics); // TODO: Handle Correctly
+        return new ProjectAnalysisResult(diagnostics.ToImmutableArray()); // TODO: Handle Correctly
     }
 
     private async Task<ImmutableArray<AnalysisDiagnostic>> AnalyzeProjectsAsync(
@@ -133,7 +132,6 @@ public class AnalysisOrchestrator
                 var projectResult = await AnalyzeProjectAsync(project, compilation, cancellationToken);
 
                 allDiagnosticsBuilder.AddRange(projectResult.Diagnostics);
-                overallStatistics.Add(projectResult.Statistics);
                 projectsAnalyzedCount++;
             }
             catch (OperationCanceledException) { throw; }

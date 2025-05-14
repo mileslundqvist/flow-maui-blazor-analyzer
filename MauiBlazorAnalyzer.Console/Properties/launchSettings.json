@@ -2,7 +2,7 @@
   "profiles": {
     "MauiBlazorAnalyzer.Console": {
       "commandName": "Project",
-      "commandLineArgs": "--input-path \"C:\\Users\\miles\\source\\repos\\InsecureMauiBlazor\\InsecureMauiBlazor.sln\""
+      "commandLineArgs": "--input-path \"C:\\Users\\miles\\source\\repos\\mileslundqvist\\InsecureMauiBlazor\\InsecureMauiBlazor.sln\""
     }
   }
 }
