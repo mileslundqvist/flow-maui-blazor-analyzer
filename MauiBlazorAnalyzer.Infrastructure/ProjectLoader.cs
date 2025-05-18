@@ -1,4 +1,5 @@
 ﻿using MauiBlazorAnalyzer.Core.Analysis.Interfaces;
+using Microsoft.Build.Construction;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.MSBuild;
@@ -48,8 +49,17 @@ public class ProjectLoader : IProjectLoader
         return results.ToImmutable();
     }
 
-    private async Task LoadProjectCompilationsAsync(ImmutableArray<(Project project, Compilation? Compilation)>.Builder results, Solution solution, CancellationToken cancellationToken)
+    private async Task LoadProjectCompilationsAsync(
+        ImmutableArray<(Project project, Compilation? Compilation)>.Builder results, 
+        Solution solution, 
+        CancellationToken cancellationToken)
     {
+
+        Project? mauiBlazorAndroidProject = null;
+
+        _logger.LogInformation("Searching for the .NET MAUI Blazor Hybrid Android project");
+
+
         foreach (var projectId in solution.ProjectIds)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -60,24 +70,18 @@ public class ProjectLoader : IProjectLoader
                 continue;
             }
 
-            if (!IsAndroidBuild(project))
+            if (IsPotentialMauiBlazorHybridAndroidProject(project))
             {
-                continue;
+                _logger.LogInformation("Identified potential .NET MAUI Blazor Hybrid Android project: {ProjectName} ({ProjectPath})", project.Name, project.FilePath);
+                mauiBlazorAndroidProject = project;
+                break;
             }
+        }
 
-            _logger.LogInformation("Getting compilation for project '{ProjectName}'...", project.Name);
-            var compilation = await project.GetCompilationAsync(cancellationToken);
-
-            if (compilation == null)
-            {
-                _logger.LogWarning("Could not get compilation for project '{ProjectName}'. Skipping analysis for this project.", project.Name);
-            }
-            else
-            {
-                _logger.LogInformation("Successfully obtained compilation for '{ProjectName}'.", project.Name);
-            }
-
-            results.Add((project, compilation));
+        if (mauiBlazorAndroidProject == null)
+        {
+            _logger.LogWarning("No .NET MAUI Blazor Hybrid Android project could be identified in the solution based on current criteria (MAUI and ANDROID preprocessor symbols). Ensure the project is configured correctly.");
+            return;
         }
     }
 
@@ -103,6 +107,46 @@ public class ProjectLoader : IProjectLoader
     private static bool IsAndroidBuild(Project project)
         => project.ParseOptions is CSharpParseOptions cpo &&
         cpo.PreprocessorSymbolNames.Any(s => s.Equals("ANDROID", StringComparison.OrdinalIgnoreCase));
+
+    private bool IsPotentialMauiBlazorHybridAndroidProject(Project project)
+    {
+        if (project.Language != LanguageNames.CSharp)
+        {
+            return false;
+        }
+
+        if (project.ParseOptions is CSharpParseOptions csharpParseOptions)
+        {
+            var symbols = csharpParseOptions.PreprocessorSymbolNames;
+            bool hasAndroidSymbol = symbols.Any(s => s.Equals("ANDROID", StringComparison.OrdinalIgnoreCase));
+
+            var xml = ProjectRootElement.Open(project.FilePath);
+
+            // helper: get the *last* value for a given property name
+            static string? GetProp(ProjectRootElement xml, string name)
+                => xml.Properties
+                      .Where(p => p.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+                      .Select(p => p.Value)
+                      .LastOrDefault();
+
+            if (hasAndroidSymbol)
+            {
+                var useMaui = GetProp(xml, "UseMaui");
+                _logger.LogDebug("Project '{ProjectName}' has MAUI and ANDROID preprocessor symbols.", project.Name);
+                return true;
+            }
+            else
+            {
+                _logger.LogDebug("Project '{ProjectName}' missing ANDROID symbol. ANDROID: {HasAndroidSymbol}", project.Name, hasAndroidSymbol);
+            }
+        }
+        else
+        {
+            _logger.LogDebug("Project '{ProjectName}' does not have CSharpParseOptions to check preprocessor symbols.", project.Name);
+        }
+
+        return false;
+    }
 
     private MSBuildWorkspace CreateMsBuildWorkspace()
     {
