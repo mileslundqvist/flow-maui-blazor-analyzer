@@ -25,6 +25,7 @@ public class AnalysisOrchestrator
         _logger = logger;
     }
 
+
     public async Task RunAnalysisAsync(AnalysisOptions options, CancellationToken cancellationToken = default)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -107,6 +108,7 @@ public class AnalysisOrchestrator
         return new ProjectAnalysisResult(diagnostics.ToImmutableArray()); // TODO: Handle Correctly
     }
 
+
     private async Task<ImmutableArray<AnalysisDiagnostic>> AnalyzeProjectsAsync(
         ImmutableArray<(Project Project, Compilation? Compilation)> projectsAndCompilations, 
         AnalysisStatistics overallStatistics, 
@@ -145,6 +147,7 @@ public class AnalysisOrchestrator
         return allDiagnosticsBuilder.ToImmutable();
     }
 
+
     private async Task<ImmutableArray<(Project Project, Compilation? Compilation)>> LoadProjectsAndCompilationsAsync(AnalysisOptions options, CancellationToken cancellationToken)
     {
         var projectsAndCompilations = await _projectLoader.LoadProjectsAndCompilationsAsync(options.InputPath, cancellationToken);
@@ -152,16 +155,19 @@ public class AnalysisOrchestrator
         return projectsAndCompilations;
     }
 
+
     private ImmutableArray<AnalysisDiagnostic> FilterDiagnostics(ImmutableArray<AnalysisDiagnostic> diagnostics, DiagnosticSeverity minimumSeverity)
     {
         return diagnostics.Where(d => d.Severity >= minimumSeverity).ToImmutableArray();
     }
+
 
     private void LogFilteringResults(int initialCount, int finalCount, DiagnosticSeverity minimumSeverity)
     {
         _logger.LogInformation("Analysis phase generated {InitialCount} raw diagnostics. Filtered down to {FinalCount} diagnostics matching minimum severity '{MinSeverity}'.",
                              initialCount, finalCount, minimumSeverity);
     }
+
 
     private async Task ReportResultAsync(AnalysisResult result, AnalysisOptions options, CancellationToken cancellationToken)
     {

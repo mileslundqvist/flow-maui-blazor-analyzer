@@ -11,6 +11,8 @@ using MauiBlazorAnalyzer.Application;
 
 class Program
 {
+
+
     static async Task<int> Main(string[] args)
     {
 
@@ -22,6 +24,7 @@ class Program
 
         return returnValue;
     }
+
 
     private static async Task RunAnalysisAsync(AnalysisOptions options)
     {
@@ -60,7 +63,6 @@ class Program
 
         await orchestrator.RunAnalysisAsync(options, cancellationTokenSource.Token);
     }
-
 
     private static RootCommand ParseCommandLineOptions()
     {
@@ -105,7 +107,6 @@ class Program
 
     }
 
-   
 
     private static void RegisterMsBuildLocator()
     {

@@ -83,6 +83,58 @@ public class ProjectLoader : IProjectLoader
             _logger.LogWarning("No .NET MAUI Blazor Hybrid Android project could be identified in the solution based on current criteria (MAUI and ANDROID preprocessor symbols). Ensure the project is configured correctly.");
             return;
         }
+
+        // 2. Collect the main project and its transitive dependencies within the solution
+        var projectsToLoad = new HashSet<Project>();
+        var dependencyGraph = solution.GetProjectDependencyGraph();
+
+        _logger.LogInformation("Adding main project '{ProjectName}' to the list of projects to load.", mauiBlazorAndroidProject.Name);
+        projectsToLoad.Add(mauiBlazorAndroidProject);
+
+        _logger.LogInformation("Identifying transitive project dependencies for '{ProjectName}'...", mauiBlazorAndroidProject.Name);
+        var transitiveDependencyIds = dependencyGraph.GetProjectsThatThisProjectTransitivelyDependsOn(mauiBlazorAndroidProject.Id);
+
+        _logger.LogInformation("Found {Count} transitive project dependencies.", transitiveDependencyIds.Count());
+        foreach (var depId in transitiveDependencyIds)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var dependentProject = solution.GetProject(depId);
+            if (dependentProject != null && dependentProject.Language == LanguageNames.CSharp)
+            {
+                _logger.LogInformation("Adding dependency project '{DependentProjectName}' to the list.", dependentProject.Name);
+                projectsToLoad.Add(dependentProject);
+            }
+            else if (dependentProject != null)
+            {
+                _logger.LogDebug("Skipping non-CSharp dependency project '{DependentProjectName}'.", dependentProject.Name);
+            }
+        }
+
+        _logger.LogInformation("Total projects to load (MAUI Blazor app and its C# dependencies): {Count}", projectsToLoad.Count);
+
+        // 3. Load compilations for these selected projects
+        foreach (var projectToCompile in projectsToLoad)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            _logger.LogInformation("Attempting to get compilation for project '{ProjectName}' ({ProjectPath})", projectToCompile.Name, projectToCompile.FilePath);
+
+            Compilation? compilation = await projectToCompile.GetCompilationAsync(cancellationToken);
+
+            if (compilation == null)
+            {
+                _logger.LogWarning("Could not get compilation for project '{ProjectName}'. Analysis for this project might be incomplete.", projectToCompile.Name);
+            }
+            else if (!(compilation is CSharpCompilation))
+            {
+                _logger.LogWarning("Compilation for project '{ProjectName}' is not a CSharpCompilation. Skipping.", projectToCompile.Name);
+                compilation = null; // Ensure we don't add a non-CSharp compilation
+            }
+            else
+            {
+                _logger.LogInformation("Successfully obtained C# compilation for '{ProjectName}'.", projectToCompile.Name);
+            }
+            results.Add((projectToCompile, compilation));
+        }
     }
 
     private async Task<Solution?> LoadSolution(MSBuildWorkspace workspace, string inputPath, CancellationToken cancellationToken)
@@ -103,10 +155,6 @@ public class ProjectLoader : IProjectLoader
             return null;
         }
     }
-
-    private static bool IsAndroidBuild(Project project)
-        => project.ParseOptions is CSharpParseOptions cpo &&
-        cpo.PreprocessorSymbolNames.Any(s => s.Equals("ANDROID", StringComparison.OrdinalIgnoreCase));
 
     private bool IsPotentialMauiBlazorHybridAndroidProject(Project project)
     {
@@ -132,8 +180,12 @@ public class ProjectLoader : IProjectLoader
             if (hasAndroidSymbol)
             {
                 var useMaui = GetProp(xml, "UseMaui");
-                _logger.LogDebug("Project '{ProjectName}' has MAUI and ANDROID preprocessor symbols.", project.Name);
-                return true;
+
+                if (useMaui != null)
+                {
+                    _logger.LogDebug("Project '{ProjectName}' has MAUI and ANDROID preprocessor symbols.", project.Name);
+                    return true;
+                }
             }
             else
             {

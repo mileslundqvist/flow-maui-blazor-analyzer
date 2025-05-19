@@ -16,7 +16,6 @@ public class BlazorEntryPointAnalyzer
     private readonly INamedTypeSymbol? _eventCallbackFactorySymbol;
 
     private readonly INamedTypeSymbol? _renderTreeBuilderSymbol; // Add symbol for RenderTreeBuilder
-    private readonly INamedTypeSymbol? _changeEventArgsSymbol; // Add symbol for ChangeEventArgs (optional but good for validation)
 
 
     private static readonly HashSet<string> LifecycleMethodNames = new()
@@ -46,9 +45,8 @@ public class BlazorEntryPointAnalyzer
         _parameterAttributeSymbol = compilation.GetTypeByMetadataName("Microsoft.AspNetCore.Components.ParameterAttribute");
         _cascadingParameterAttributeSymbol = compilation.GetTypeByMetadataName("Microsoft.AspNetCore.Components.CascadingParameterAttribute");
         _jsInvokableAttributeSymbol = compilation.GetTypeByMetadataName("Microsoft.JSInterop.JSInvokableAttribute");
-        _eventCallbackFactorySymbol ??= compilation.GetTypeByMetadataName("Microsoft.AspNetCore.Components.EventCallbackFactory"); // Used later
+        _eventCallbackFactorySymbol ??= compilation.GetTypeByMetadataName("Microsoft.AspNetCore.Components.EventCallbackFactory");
         _renderTreeBuilderSymbol = compilation.GetTypeByMetadataName("Microsoft.AspNetCore.Components.Rendering.RenderTreeBuilder");
-        _changeEventArgsSymbol = compilation.GetTypeByMetadataName("Microsoft.AspNetCore.Components.ChangeEventArgs");
     }
 
     /// <summary>
@@ -103,7 +101,7 @@ public class BlazorEntryPointAnalyzer
     private void AnalyzeComponentType(INamedTypeSymbol componentTypeSymbol, List<EntryPointInfo> entryPoints)
     {
         FindParameterSetters(componentTypeSymbol, entryPoints);
-        FindJSInvokableMethods(componentTypeSymbol, entryPoints); // Can be in components too
+        FindJSInvokableMethods(componentTypeSymbol, entryPoints);
         FindLifecycleMethods(componentTypeSymbol, entryPoints);
         FindEventHandlerMethods(componentTypeSymbol, entryPoints);
         FindBindingCallbacks(componentTypeSymbol, entryPoints);
@@ -171,7 +169,6 @@ public class BlazorEntryPointAnalyzer
                             }
                             else
                             {
-                                // *** Let's break down the check for "CreateBinder" ***
 
                                 // Check 3: Is the method name "CreateBinder"?
                                 bool isCreateBinderMethod = valueInvocation.TargetMethod.Name == "CreateBinder";
@@ -195,7 +192,7 @@ public class BlazorEntryPointAnalyzer
                         }
                     }
                 }
-                // ----- Keep the CreateBinder check as a potential alternative/fallback -----
+
                 // This might be used for component parameter binding (@bind-Value) or programmatically created bindings.
                 else if (invocationOp.TargetMethod.Name == "CreateBinder" &&
                          SymbolEqualityComparer.Default.Equals(invocationOp.TargetMethod.ContainingType?.OriginalDefinition, _eventCallbackFactorySymbol) &&
@@ -256,7 +253,6 @@ public class BlazorEntryPointAnalyzer
         }
         else if (delegateCreation.Target is IMethodReferenceOperation methodRef)
         {
-            // Handle Method Group binding: @bind="MySetterMethod"
             var targetMethod = methodRef.Method;
             // Ensure the method belongs to the component and is suitable (e.g., takes one parameter)
             if (SymbolEqualityComparer.Default.Equals(targetMethod.ContainingType, componentType) &&
@@ -265,7 +261,7 @@ public class BlazorEntryPointAnalyzer
                 // The *method itself* is the entry point, and its *parameters* are the source of taint.
                 // However, for IFDS, we are interested in where the taint *goes*.
                 // We need to analyze the *body* of 'targetMethod' to see which field/property it assigns to.
-                // This requires getting the IOperation for targetMethod's body, which is more involved.
+                // This requires getting the IOperation for targetMethod's body, which is more complex.
 
                 // Simpler approach for now: Add the method as an entry point, maybe mark parameters as tainted.
                 // The IFDS analysis itself would then track taint flow from the parameter *inside* the method.
@@ -274,23 +270,19 @@ public class BlazorEntryPointAnalyzer
                 {
                     entryPoints.Add(new EntryPointInfo
                     {
-                        Type = EntryPointType.BindingCallback, // Or maybe a distinct type like BindingMethodHandler?
+                        Type = EntryPointType.BindingCallback,
                         ContainingTypeName = componentType.ToDisplayString(),
                         EntryPointSymbol = targetMethod, // The actual method used as callback
                         AssociatedSymbol = null, // Target isn't known without analyzing the method body
                         Operation = methodRef,
                         Name = $"@bind-method:{attrName ?? "event"} → {targetMethod.Name}",
                         Location = diagnosticLocation,
-                        // Decide how to mark taint for IFDS: taint the method's parameters?
                         TaintedParameters = targetMethod.Parameters.ToList() // Mark parameters as potential sources
                     });
                 }
             }
         }
     }
-
-
-
 
     // Helper to find the assignment within a lambda (extracted for clarity)
     private ISimpleAssignmentOperation? FindAssignmentInLambda(IAnonymousFunctionOperation lambdaOp)
@@ -303,8 +295,6 @@ public class BlazorEntryPointAnalyzer
                                        .OfType<ISimpleAssignmentOperation>()
                                        .FirstOrDefault();
         }
-        // Add checks for other lambda body structures if necessary
-        // else if (lambdaOp.Body is ISimpleAssignmentOperation directAssignment) { return directAssignment; }
         return null; // Not found or unsupported structure
     }
 
@@ -327,7 +317,6 @@ public class BlazorEntryPointAnalyzer
             case IFieldReferenceOperation fieldRef:
                 targetSymbol = fieldRef.Field;
                 break;
-                // Could add ILocalReferenceOperation etc. if binding to locals were common/supported
         }
 
         // Validate: Ensure the symbol exists, is assignable (Property needs setter), and belongs to the component
@@ -362,12 +351,11 @@ public class BlazorEntryPointAnalyzer
             }
             else if (currentSymbol is INamedTypeSymbol type)
             {
-                // Important: Check if the type itself is from the source assembly before yielding
                 if (SymbolEqualityComparer.Default.Equals(type.ContainingAssembly, _sourceAssembly))
                 {
                     yield return type;
                 }
-                // Check nested types - they belong to the containing type's assembly
+
                 foreach (var nestedType in type.GetTypeMembers())
                 {
                     // No need for assembly check here, nested types are part of the containing type's assembly
@@ -494,12 +482,8 @@ public class BlazorEntryPointAnalyzer
         // Example check: OnInitializedAsync might be protected virtual Task OnInitializedAsync()
         if (methodSymbol.Name == "OnInitializedAsync" && methodSymbol.Parameters.IsEmpty && methodSymbol.DeclaredAccessibility == Accessibility.Protected && IsTaskType(methodSymbol.ReturnType)) return true;
 
-        // Add checks for other methods like OnParametersSet, OnAfterRender...
-        // SetParametersAsync is often Task SetParametersAsync(ParameterView parameters)
         if (methodSymbol.Name == "SetParametersAsync" && methodSymbol.Parameters.Length == 1 && IsTaskType(methodSymbol.ReturnType))
         {
-            // Ideally check parameter type is ParameterView or related
-            // For simplicity now, just check name, param count, and return type
             return true;
         }
 
@@ -546,8 +530,6 @@ internal class EventHandlerSyntaxWalker : CSharpSyntaxWalker
     private readonly INamedTypeSymbol? _eventCallbackFactorySymbol;
     private readonly INamedTypeSymbol _componentTypeSymbol;
     private readonly List<EntryPointInfo> _entryPoints;
-
-    private const string CreateMethodName = "Create";
 
     private static readonly HashSet<string> EventAttributePrefixes = new(StringComparer.OrdinalIgnoreCase) { "on" };
 
@@ -596,7 +578,6 @@ internal class EventHandlerSyntaxWalker : CSharpSyntaxWalker
         if (!nameConstValue.HasValue || nameConstValue.Value is not string attrName ||
             !EventAttributePrefixes.Any(prefix => attrName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
         {
-            base.VisitInvocationExpression(node); // Continue walking children
             return;
         }
 
@@ -617,7 +598,6 @@ internal class EventHandlerSyntaxWalker : CSharpSyntaxWalker
                 valueInvocationExpr.ArgumentList.Arguments.Count >= 2) // Needs receiver and callback
             {
                 // --- Found the pattern! Extract the handler method ---
-                // Handler is usually the second argument (index 1) to Create
                 var handlerArgExpr = valueInvocationExpr.ArgumentList.Arguments[1].Expression;
                 ISymbol? handlerSymbol = ResolveHandlerSymbol(handlerArgExpr);
 
@@ -635,8 +615,6 @@ internal class EventHandlerSyntaxWalker : CSharpSyntaxWalker
                             EntryPointSymbol = eventHandlerMethod,
                             Name = $"{attrName} → {eventHandlerMethod.Name}", // Include event name
                             Location = eventHandlerMethod.Locations.FirstOrDefault() ?? node.GetLocation(), // Prefer method location
-                            // Decide if parameters are tainted (e.g., MouseEventArgs)
-                            // TaintedParameters = eventHandlerMethod.Parameters.ToList()
                         });
                     }
                     // We found the handler, no need to visit children of this AddAttribute call further
@@ -644,34 +622,7 @@ internal class EventHandlerSyntaxWalker : CSharpSyntaxWalker
                 }
             }
         }
-
-        // If we didn't find the specific pattern, continue walking the children of the AddAttribute call
         base.VisitInvocationExpression(node);
-
-
-
-        //// --- Handle @onclick etc. -> Create ---
-        //if (true)
-        //{
-        //    ISymbol? handlerSym = ResolveHandlerSymbol(secondArgExpr);
-        //    if (handlerSym is IMethodSymbol eventHandlerMethod &&
-        //        SymbolEqualityComparer.Default.Equals(eventHandlerMethod.ContainingType, _componentTypeSymbol))
-        //    {
-        //        // Avoid adding duplicates
-        //        if (!_entryPoints.Any(ep => ep.Type == EntryPointType.EventHandlerMethod &&
-        //                                    SymbolEqualityComparer.Default.Equals(ep.EntryPointSymbol, eventHandlerMethod)))
-        //        {
-        //            _entryPoints.Add(new EntryPointInfo
-        //            {
-        //                Type = EntryPointType.EventHandlerMethod,
-        //                ContainingTypeName = _componentTypeSymbol.ToDisplayString(),
-        //                EntryPointSymbol = eventHandlerMethod,
-        //                Name = eventHandlerMethod.Name,
-        //                Location = eventHandlerMethod.Locations.FirstOrDefault() ?? node.GetLocation()
-        //            });
-        //        }
-        //    }
-        //}
     }
 
     private ISymbol? ResolveHandlerSymbol(ExpressionSyntax expr)
