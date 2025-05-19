@@ -1,10 +1,12 @@
 ﻿using MauiBlazorAnalyzer.Core.EntryPoints;
-using MauiBlazorAnalyzer.Core.Interprocedural.DB;
+using MauiBlazorAnalyzer.Core.Flow;
+using MauiBlazorAnalyzer.Core.Flow.DB;
+using MauiBlazorAnalyzer.Core.Flow.FlowFunctions;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Operations;
 using System.Collections.Immutable;
 
-namespace MauiBlazorAnalyzer.Core.Interprocedural.FlowFunctions;
+namespace MauiBlazorAnalyzer.Core.Flow.FlowFunctions;
 internal sealed class CallFlow : BaseFlowFunction
 {
 
@@ -97,8 +99,6 @@ internal sealed class CallFlow : BaseFlowFunction
                     default:
                         return false;
                 }
-
-                break;
             default:
                 return false; // Operation is not a recognized call pattern
         }

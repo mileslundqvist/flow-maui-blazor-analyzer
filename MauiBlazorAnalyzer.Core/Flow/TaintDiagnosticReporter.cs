@@ -1,11 +1,11 @@
 ﻿using MauiBlazorAnalyzer.Core.Analysis;
-using MauiBlazorAnalyzer.Core.Interprocedural.DB;
+using MauiBlazorAnalyzer.Core.Flow.DB;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Operations;
 using System.Collections.Immutable;
 using System.Text;
 
-namespace MauiBlazorAnalyzer.Core.Interprocedural;
+namespace MauiBlazorAnalyzer.Core.Flow;
 
 
 public sealed record TaintFinding(

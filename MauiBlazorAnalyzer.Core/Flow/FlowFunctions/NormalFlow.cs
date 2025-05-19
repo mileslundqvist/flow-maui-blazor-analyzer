@@ -1,10 +1,12 @@
 ﻿using MauiBlazorAnalyzer.Core.EntryPoints;
-using MauiBlazorAnalyzer.Core.Interprocedural.DB;
+using MauiBlazorAnalyzer.Core.Flow;
+using MauiBlazorAnalyzer.Core.Flow.DB;
+using MauiBlazorAnalyzer.Core.Flow.FlowFunctions;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Operations;
 using System.Collections.Immutable;
 
-namespace MauiBlazorAnalyzer.Core.Interprocedural.FlowFunctions;
+namespace MauiBlazorAnalyzer.Core.Flow.FlowFunctions;
 internal sealed class NormalFlow : BaseFlowFunction
 {
     public NormalFlow(ICFGEdge edge, TaintSpecDB db, List<EntryPointInfo> entryPoints) : base(edge, db, entryPoints) { }

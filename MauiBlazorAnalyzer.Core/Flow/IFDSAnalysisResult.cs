@@ -1,4 +1,6 @@
-﻿namespace MauiBlazorAnalyzer.Core.Interprocedural;
+﻿using MauiBlazorAnalyzer.Core.Flow;
+
+namespace MauiBlazorAnalyzer.Core.Flow;
 public class IFDSAnalysisResult
 {
     private readonly Dictionary<ICFGNode, HashSet<TaintFact>> _results;

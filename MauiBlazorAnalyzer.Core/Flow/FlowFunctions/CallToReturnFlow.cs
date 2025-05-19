@@ -1,7 +1,9 @@
 ﻿using MauiBlazorAnalyzer.Core.EntryPoints;
-using MauiBlazorAnalyzer.Core.Interprocedural.DB;
+using MauiBlazorAnalyzer.Core.Flow;
+using MauiBlazorAnalyzer.Core.Flow.DB;
+using MauiBlazorAnalyzer.Core.Flow.FlowFunctions;
 
-namespace MauiBlazorAnalyzer.Core.Interprocedural.FlowFunctions;
+namespace MauiBlazorAnalyzer.Core.Flow.FlowFunctions;
 internal sealed class CallToReturnFlow : BaseFlowFunction
 {
     public CallToReturnFlow(ICFGEdge edge, TaintSpecDB dB, List<EntryPointInfo> entryPoints) : base(edge, dB, entryPoints)

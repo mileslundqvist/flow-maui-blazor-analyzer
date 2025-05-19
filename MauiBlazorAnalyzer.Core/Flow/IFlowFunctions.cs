@@ -1,4 +1,6 @@
-﻿namespace MauiBlazorAnalyzer.Core.Interprocedural;
+﻿using MauiBlazorAnalyzer.Core.Flow;
+
+namespace MauiBlazorAnalyzer.Core.Flow;
 public interface IFlowFunctions
 {
     IFlowFunction GetNormalFlowFunction(ICFGEdge edge);

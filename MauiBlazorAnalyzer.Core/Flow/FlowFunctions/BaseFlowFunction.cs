@@ -1,7 +1,8 @@
 ﻿using MauiBlazorAnalyzer.Core.EntryPoints;
-using MauiBlazorAnalyzer.Core.Interprocedural.DB;
+using MauiBlazorAnalyzer.Core.Flow;
+using MauiBlazorAnalyzer.Core.Flow.DB;
 
-namespace MauiBlazorAnalyzer.Core.Interprocedural.FlowFunctions;
+namespace MauiBlazorAnalyzer.Core.Flow.FlowFunctions;
 internal abstract class BaseFlowFunction : IFlowFunction
 {
     protected readonly ICFGEdge Edge;

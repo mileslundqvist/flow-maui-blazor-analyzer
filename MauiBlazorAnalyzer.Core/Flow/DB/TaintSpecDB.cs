@@ -1,7 +1,7 @@
 ﻿using Microsoft.CodeAnalysis;
 using System.Text.Json;
 
-namespace MauiBlazorAnalyzer.Core.Interprocedural.DB;
+namespace MauiBlazorAnalyzer.Core.Flow.DB;
 public sealed class TaintSpecDB
 {
     private static readonly SymbolDisplayFormat SinkComparisonFormat = new SymbolDisplayFormat(
@@ -51,9 +51,9 @@ public sealed class TaintSpecDB
 
         string assemblyLocation = AppContext.BaseDirectory;
 
-        string sinksFilePath = Path.Combine(assemblyLocation, "Interprocedural", "DB", "sinks-spec.json");
-        string sourcesFilePath = Path.Combine(assemblyLocation, "Interprocedural", "DB", "sources-spec.json");
-        string sanitizersFilePath = Path.Combine(assemblyLocation, "Interprocedural", "DB", "sanitizers-spec.json");
+        string sinksFilePath = Path.Combine(assemblyLocation, "Flow", "DB", "sinks-spec.json");
+        string sourcesFilePath = Path.Combine(assemblyLocation, "Flow", "DB", "sources-spec.json");
+        string sanitizersFilePath = Path.Combine(assemblyLocation, "Flow", "DB", "sanitizers-spec.json");
 
         Add(sinksFilePath, _sinks);
         Add(sourcesFilePath, _sources);
@@ -90,7 +90,7 @@ public sealed class TaintSpecDB
         {
             Console.Error.WriteLine($"Error reading taint specification file {FilePath}: {ioEx.Message}");
         }
-        catch (System.Exception ex)
+        catch (Exception ex)
         {
             Console.Error.WriteLine($"Unexpected error loading taint specification from {FilePath}: {ex.Message}");
         }

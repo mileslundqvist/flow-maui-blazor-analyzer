@@ -1,4 +1,4 @@
-﻿using MauiBlazorAnalyzer.Core.Intraprocedural.Context;
+﻿using MauiBlazorAnalyzer.Core.Flow;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.FindSymbols;
 using Microsoft.CodeAnalysis.FlowAnalysis;
@@ -6,7 +6,7 @@ using Microsoft.CodeAnalysis.Operations;
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
 
-namespace MauiBlazorAnalyzer.Core.Interprocedural;
+namespace MauiBlazorAnalyzer.Core.Flow;
 public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
 {
     private readonly Compilation _compilation;
@@ -43,10 +43,6 @@ public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
             var entryNode = GetOrAddEntryNode(methodSymbol);
             entryNodesList.Add(entryNode);
 
-            //AddNodeInternal(entry);
-            //list.Add(entry);
-            //_entryMap.TryAdd(entry.MethodContext.MethodSymbol, entry);
-            //_methodContextCache.TryAdd(entry.MethodContext.MethodSymbol, entry.MethodContext);
         }
         EntryNodes = entryNodesList.AsReadOnly();
     }
@@ -107,9 +103,8 @@ public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
         catch (Exception ex)
         {
             Console.Error.WriteLine($"Error computing successors for {node}: {ex}");
-            // Potentially mark node as failed? Remove from cache?
-            _successorsComputedTasks.TryRemove(node, out _); // Example: Allow retry on next call
-                                                             // Re-throw or handle as appropriate for your analyzer's overall error strategy
+ 
+            _successorsComputedTasks.TryRemove(node, out _);
             throw;
         }
     }
@@ -249,11 +244,7 @@ public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
             else
             {
                 // This might happen if CalculateReturnSiteNode couldn't find a successor
-                // (e.g., end of method, throw without catch). Often leads to Exit node implicitly.
                 Console.WriteLine($"Warning: No intraprocedural successor found for non-call node: {node}");
-                // Optionally add edge to Exit node as fallback?
-                // var exitNode = FindOrCreateNode(null, node.MethodContext, ICFGNodeKind.Exit);
-                // AddEdgeInternal(node, exitNode, EdgeType.Intraprocedural);
             }
         }
     }
@@ -299,7 +290,7 @@ public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
     private ICFGNode? CalculateReturnSiteNode(BasicBlock block, ICFGNode node)
     {
         int operationIndex = Array.IndexOf(block.Operations.ToArray(), node.Operation);
-        IOperation? nextOperationInBlock = (operationIndex >= 0 && operationIndex < block.Operations.Length - 1)
+        IOperation? nextOperationInBlock = operationIndex >= 0 && operationIndex < block.Operations.Length - 1
                                            ? block.Operations[operationIndex + 1]
                                            : null;
 
@@ -369,10 +360,10 @@ public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
         else
         {
             if (operation is IInvocationOperation ||
-                (operation is ISimpleAssignmentOperation assignOp &&
-                (assignOp.Value is IInvocationOperation || assignOp.Value is IAwaitOperation)) ||
-                (operation is IExpressionStatementOperation exprOp && (exprOp.Operation is IInvocationOperation ||
-                (exprOp.Operation is ISimpleAssignmentOperation innerAssignOp && innerAssignOp.Value is IInvocationOperation))))
+                operation is ISimpleAssignmentOperation assignOp &&
+                (assignOp.Value is IInvocationOperation || assignOp.Value is IAwaitOperation) ||
+                operation is IExpressionStatementOperation exprOp && (exprOp.Operation is IInvocationOperation ||
+                exprOp.Operation is ISimpleAssignmentOperation innerAssignOp && innerAssignOp.Value is IInvocationOperation))
             {
                 kind = ICFGNodeKind.CallSite;
             }

@@ -1,11 +1,11 @@
 ﻿using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
-namespace MauiBlazorAnalyzer.Core.Intraprocedural.Context;
+namespace MauiBlazorAnalyzer.Core.Flow;
 public class MethodAnalysisContext
 {
     public readonly IMethodSymbol MethodSymbol;
-    public IOperation RootOperation;
+    public IOperation RootOperation { get; internal set; }
 
     public MethodAnalysisContext(IMethodSymbol methodSymbol, IOperation operation = null)
     {
@@ -23,6 +23,7 @@ public class MethodAnalysisContext
             .FirstOrDefault(d => d.Body != null || d.ExpressionBody != null);
 
         if (decl == null) return null;
+
         var model = compilation.GetSemanticModel(decl.SyntaxTree);
         RootOperation = model.GetOperation(decl);
         return RootOperation;
@@ -32,5 +33,10 @@ public class MethodAnalysisContext
     {
         return obj is MethodAnalysisContext context &&
                EqualityComparer<IMethodSymbol>.Default.Equals(MethodSymbol, context.MethodSymbol);
+    }
+
+    public override int GetHashCode()
+    {
+        return EqualityComparer<IMethodSymbol>.Default.GetHashCode(MethodSymbol);
     }
 }

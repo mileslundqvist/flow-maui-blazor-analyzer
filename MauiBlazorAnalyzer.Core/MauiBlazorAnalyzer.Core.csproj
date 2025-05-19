@@ -19,13 +19,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Update="Interprocedural\DB\sanitizers-spec.json">
+    <None Update="Flow\DB\sanitizers-spec.json">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
-    <None Update="Interprocedural\DB\sinks-spec.json">
+    <None Update="Flow\DB\sinks-spec.json">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
-    <None Update="Interprocedural\DB\sources-spec.json">
+    <None Update="Flow\DB\sources-spec.json">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
   </ItemGroup>

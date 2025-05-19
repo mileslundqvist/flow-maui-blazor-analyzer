@@ -1,8 +1,9 @@
 ﻿using MauiBlazorAnalyzer.Core.EntryPoints;
-using MauiBlazorAnalyzer.Core.Interprocedural.DB;
-using MauiBlazorAnalyzer.Core.Interprocedural.FlowFunctions;
+using MauiBlazorAnalyzer.Core.Flow;
+using MauiBlazorAnalyzer.Core.Flow.DB;
+using MauiBlazorAnalyzer.Core.Flow.FlowFunctions;
 
-namespace MauiBlazorAnalyzer.Core.Interprocedural;
+namespace MauiBlazorAnalyzer.Core.Flow;
 public sealed class TaintFlowFunctions : IFlowFunctions
 {
     private readonly TaintSpecDB _db = TaintSpecDB.Instance;

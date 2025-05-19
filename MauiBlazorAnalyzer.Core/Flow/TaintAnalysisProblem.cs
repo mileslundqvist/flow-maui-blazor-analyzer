@@ -1,8 +1,9 @@
 ﻿using MauiBlazorAnalyzer.Core.EntryPoints;
+using MauiBlazorAnalyzer.Core.Flow;
 using Microsoft.CodeAnalysis;
 using System.Collections.Immutable;
 
-namespace MauiBlazorAnalyzer.Core.Interprocedural;
+namespace MauiBlazorAnalyzer.Core.Flow;
 public class TaintAnalysisProblem : IFDSTabulationProblem
 {
     private readonly InterproceduralCFG _graph;

@@ -1,7 +1,8 @@
-﻿using Microsoft.CodeAnalysis;
+﻿using MauiBlazorAnalyzer.Core.Flow;
+using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Operations;
 
-namespace MauiBlazorAnalyzer.Core.Interprocedural;
+namespace MauiBlazorAnalyzer.Core.Flow;
 public sealed class TaintFact : IFact
 {
     public AccessPath? Path { get; }
@@ -38,8 +39,8 @@ public sealed class TaintFact : IFact
 
     public override bool Equals(object? obj)
         => obj is TaintFact other &&
-           ((IsReturnValue && other.IsReturnValue && SymbolEqualityComparer.Default.Equals(ReturnMethod, other.ReturnMethod)) ||
-            (!IsReturnValue && !other.IsReturnValue && EqualityComparer<AccessPath>.Default.Equals(Path!, other.Path!)));
+           (IsReturnValue && other.IsReturnValue && SymbolEqualityComparer.Default.Equals(ReturnMethod, other.ReturnMethod) ||
+            !IsReturnValue && !other.IsReturnValue && EqualityComparer<AccessPath>.Default.Equals(Path!, other.Path!));
 
     public override int GetHashCode()
     {

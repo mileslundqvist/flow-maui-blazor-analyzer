@@ -1,7 +1,7 @@
-﻿using MauiBlazorAnalyzer.Core.Intraprocedural.Context;
+﻿using MauiBlazorAnalyzer.Core.Flow;
 using Microsoft.CodeAnalysis;
 
-namespace MauiBlazorAnalyzer.Core.Interprocedural;
+namespace MauiBlazorAnalyzer.Core.Flow;
 
 public enum ICFGNodeKind { Normal, CallSite, Entry, Exit, ReturnSite }
 
@@ -23,8 +23,8 @@ public class ICFGNode
     {
         if (obj is ICFGNode other)
         {
-            bool operationEquals = (Operation == null && other.Operation == null) ||
-                (Operation?.Syntax.GetLocation().SourceSpan == other.Operation?.Syntax.GetLocation().SourceSpan);
+            bool operationEquals = Operation == null && other.Operation == null ||
+                Operation?.Syntax.GetLocation().SourceSpan == other.Operation?.Syntax.GetLocation().SourceSpan;
 
             return Kind == other.Kind && SymbolEqualityComparer.Default.Equals(MethodContext.MethodSymbol, other.MethodContext.MethodSymbol) &&
                 operationEquals;

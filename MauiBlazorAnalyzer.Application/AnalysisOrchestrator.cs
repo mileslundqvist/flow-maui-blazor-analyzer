@@ -1,7 +1,7 @@
 ﻿using MauiBlazorAnalyzer.Core.Analysis;
 using MauiBlazorAnalyzer.Core.Analysis.Interfaces;
 using MauiBlazorAnalyzer.Core.EntryPoints;
-using MauiBlazorAnalyzer.Core.Interprocedural;
+using MauiBlazorAnalyzer.Core.Flow;
 using Microsoft.CodeAnalysis;
 using Microsoft.Extensions.Logging;
 using System.Collections.Immutable;

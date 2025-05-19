@@ -1,4 +1,6 @@
-﻿namespace MauiBlazorAnalyzer.Core.Interprocedural;
+﻿using MauiBlazorAnalyzer.Core.Flow;
+
+namespace MauiBlazorAnalyzer.Core.Flow;
 
 public class IFDSSolver
 {
@@ -145,7 +147,7 @@ public class IFDSSolver
 
 
     // Call edge handling (non-zero facts)
-    private async Task HandleCall(ICFGEdge callEdge, IFact callSiteFact, ExplodedGraphNode callSiteState)
+    private void HandleCall(ICFGEdge callEdge, IFact callSiteFact, ExplodedGraphNode callSiteState)
     {
         var callSiteNode = callEdge.From;
         var calleeEntryNode = _graph.GetEntryNode(callEdge.To);
