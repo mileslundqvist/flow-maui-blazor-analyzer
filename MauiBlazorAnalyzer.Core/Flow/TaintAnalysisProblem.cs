@@ -9,7 +9,7 @@ public class TaintAnalysisProblem : IFDSTabulationProblem
     private readonly InterproceduralCFG _graph;
     private readonly IFlowFunctions _flowFunctions;
     private readonly ZeroFact _zeroValue = ZeroFact.Instance;
-    private readonly IEnumerable<EntryPointInfo> _entryPointsInfo; // Store for Flow Functions
+    private readonly IEnumerable<EntryPointInfo> _entryPointsInfo;
 
     public InterproceduralCFG Graph => _graph;
     public IFlowFunctions FlowFunctions => _flowFunctions;
@@ -17,7 +17,11 @@ public class TaintAnalysisProblem : IFDSTabulationProblem
     public ZeroFact ZeroValue => _zeroValue;
 
 
-    public TaintAnalysisProblem(Project project, Compilation compilation, IEnumerable<EntryPointInfo> entryPoints)
+    public TaintAnalysisProblem(
+        Project project, 
+        Compilation compilation, 
+        IEnumerable<EntryPointInfo> entryPoints, 
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(project, nameof(project));
         ArgumentNullException.ThrowIfNull(compilation);
@@ -42,19 +46,17 @@ public class TaintAnalysisProblem : IFDSTabulationProblem
 
             if (!rootMethodSymbols.Any())
             {
-                // Handle case with no entry points found or consider adding default roots (e.g., Main)
                 Console.Error.WriteLine("Warning: No root methods identified for ICFG construction based on provided entry points.");
-                // Potentially add Program.Main or other fallbacks if applicable
             }
 
         }
 
-        _graph = new InterproceduralCFG(project, compilation, rootMethodSymbols);
+        _graph = new InterproceduralCFG(project, compilation, rootMethodSymbols, cancellationToken);
 
         // --- Pass EntryPointInfo to Flow Functions ---
-        _flowFunctions = new TaintFlowFunctions(entryPoints); // Modify constructor
+        _flowFunctions = new TaintFlowFunctions(entryPoints);
 
-        // Compute initial seeds (simplified)
+        // Compute initial seeds
         InitialSeeds = ComputeInitialSeeds(_entryPointsInfo, _graph);
     }
 

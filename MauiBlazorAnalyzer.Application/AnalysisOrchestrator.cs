@@ -90,22 +90,18 @@ public class AnalysisOrchestrator
     {
 
         var analyzer = new BlazorEntryPointAnalyzer(compilation);
-        List<EntryPointInfo> entryPoints = analyzer.FindEntryPoints();
-        var taintAnalysisProblem = new TaintAnalysisProblem(project, compilation, entryPoints);
+        var entryPoints = analyzer.FindEntryPoints();
 
-        var solver = new IFDSSolver(taintAnalysisProblem);
+        var taintAnalysisProblem = new TaintAnalysisProblem(project, compilation, entryPoints, cancellationToken);
+
+        var solver = new IFDSSolver(taintAnalysisProblem, cancellationToken: cancellationToken);
         var result = await solver.Solve();
 
         var reporter = new TaintDiagnosticReporter(result, taintAnalysisProblem.Graph);
 
-        //foreach (AnalysisDiagnostic d in reporter.ToDiagnostics())
-        //{
-        //    Console.WriteLine($"{d.Severity}: {d.Message} @ {d.FilePath}:{d.Location.StartLinePosition.Line + 1}");
-        //}
         var diagnostics = reporter.ToDiagnostics();
 
-
-        return new ProjectAnalysisResult(diagnostics.ToImmutableArray()); // TODO: Handle Correctly
+        return new ProjectAnalysisResult(diagnostics.ToImmutableArray());
     }
 
 

@@ -1,7 +1,6 @@
-﻿using MauiBlazorAnalyzer.Core.Flow;
+﻿using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using System.Collections.Concurrent;
-using System.Threading;
-using System.Threading.Tasks;
 
 namespace MauiBlazorAnalyzer.Core.Flow;
 
@@ -9,6 +8,7 @@ public class IFDSSolver
 {
     private readonly IFDSTabulationProblem _problem;
     private readonly InterproceduralCFG _graph;
+    private readonly ILogger<IFDSSolver> _logger;
     private readonly CancellationToken _cancellationToken;
 
     // path‑edges:   ⟨node,fact⟩  -> { ⟨predNode,predFact⟩ }
@@ -30,10 +30,11 @@ public class IFDSSolver
     // Cache for frequently accessed edges
     private readonly ConcurrentDictionary<ICFGNode, IEnumerable<ICFGEdge>> _edgeCache = new();
 
-    public IFDSSolver(IFDSTabulationProblem problem, CancellationToken cancellationToken = default)
+    public IFDSSolver(IFDSTabulationProblem problem, ILogger<IFDSSolver>? logger = null, CancellationToken cancellationToken = default)
     {
         _problem = problem ?? throw new ArgumentNullException(nameof(problem));
         _graph = problem.Graph ?? throw new ArgumentNullException(nameof(problem), "Problem.Graph cannot be null");
+        _logger = logger ?? NullLogger<IFDSSolver>.Instance;
         _cancellationToken = cancellationToken;
     }
 
@@ -45,7 +46,6 @@ public class IFDSSolver
                                      _pathEdges.ToDictionary(kv => kv.Key, kv => kv.Value));
     }
 
-    // Seeding
     private void Initialize()
     {
         // Clear all state
@@ -86,7 +86,8 @@ public class IFDSSolver
             }
             catch (Exception ex)
             {
-
+                _logger.LogError(ex, "Error processing work item: node={Node}, fact={Fact}",
+                    currentNode, currentFact);
             }
         }
     }
@@ -135,16 +136,16 @@ public class IFDSSolver
                     break;
 
                 default:
-                    Console.WriteLine($"Unknown edge type: {edge.Type}");
+                    _logger.LogWarning("Unknown edge type: {EdgeType}", edge.Type);
                     break;
             }
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"Error processing edge {edge.Type} from {edge.From} to {edge.To}: {ex.Message}");
+            _logger.LogError(ex, "Error processing {EdgeType} edge from {From} to {To}",
+                edge.Type, edge.From, edge.To);
         }
     }
-
 
     private void HandleCallToReturn(ICFGEdge edge, IFact currentFact, ExplodedGraphNode currentState)
     {
@@ -159,7 +160,8 @@ public class IFDSSolver
             }
         } catch (Exception ex)
         {
-            Console.Error.WriteLine($"Error in HandleCallToReturn: {ex.Message}");
+            _logger.LogError(ex, "Error in HandleCallToReturn for edge {From} -> {To}", edge.From, edge.To);
+            throw;
         }
 
     }
@@ -177,7 +179,8 @@ public class IFDSSolver
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"Error in HandleIntraprocedural: {ex.Message}");
+            _logger.LogError(ex, "Error in HandleIntraprocedural for edge {From} -> {To}", edge.From, edge.To);
+            throw;
         }
     }
 
@@ -216,7 +219,8 @@ public class IFDSSolver
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"Error in HandleCall: {ex.Message}");
+            _logger.LogError(ex, "Error in HandleCall for edge {From} -> {To}", callEdge.From, callEdge.To);
+            throw;
         }
     }
 
@@ -265,7 +269,8 @@ public class IFDSSolver
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"Error in HandleReturn: {ex.Message}");
+            _logger.LogError(ex, "Error in HandleReturn for edge {From} -> {To}", returnEdge.From, returnEdge.To);
+            throw;
         }
     }
 
