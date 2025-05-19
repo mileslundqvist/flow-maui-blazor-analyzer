@@ -63,7 +63,7 @@ public class IFDSSolver
             _inQueue.Remove(currentExplodedNode);
             var (currentNode, currentFact) = currentExplodedNode; // Deconstruct
 
-            foreach (var edge in await _graph.GetOutgoingEdges(currentNode))
+            foreach (var edge in await _graph.GetOutgoingEdgesAsync(currentNode))
             {
 
                 var targetNode = edge.To;
@@ -161,7 +161,7 @@ public class IFDSSolver
             if (_summaryEdges.TryGetValue(summaryKey, out var cachedExitFacts))
             {
                 var callToReturnEdgeTarget = _graph
-                    .GetOutgoingEdges(callEdge.From)
+                    .GetOutgoingEdgesAsync(callEdge.From)
                     .Result
                     .FirstOrDefault(e => e.Type == EdgeType.CallToReturn && e.From.Equals(callEdge.From))?.To;
 
@@ -220,7 +220,7 @@ public class IFDSSolver
                     var (callSiteNode, callSiteFact) = callSiteState;
 
                     // Find the return site node
-                    var callToReturnEdge = _graph.GetOutgoingEdges(callSiteNode).Result.FirstOrDefault(e => e.Type == EdgeType.CallToReturn);
+                    var callToReturnEdge = _graph.GetOutgoingEdgesAsync(callSiteNode).Result.FirstOrDefault(e => e.Type == EdgeType.CallToReturn);
                     var returnSiteNode = callToReturnEdge?.To;
 
                     if (returnSiteNode != null)
