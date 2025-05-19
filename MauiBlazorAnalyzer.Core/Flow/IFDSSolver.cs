@@ -1,4 +1,7 @@
 ﻿using MauiBlazorAnalyzer.Core.Flow;
+using System.Collections.Concurrent;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace MauiBlazorAnalyzer.Core.Flow;
 
@@ -6,86 +9,302 @@ public class IFDSSolver
 {
     private readonly IFDSTabulationProblem _problem;
     private readonly InterproceduralCFG _graph;
+    private readonly CancellationToken _cancellationToken;
 
     // path‑edges:   ⟨node,fact⟩  -> { ⟨predNode,predFact⟩ }
-    private readonly Dictionary<ExplodedGraphNode, HashSet<ExplodedGraphNode>> _pathEdges = new();
+    private readonly ConcurrentDictionary<ExplodedGraphNode, HashSet<ExplodedGraphNode>> _pathEdges = new();
 
     // summary‑edges: (calleeEntry, inFact) -> { outFact }  (cached after first run)
-    private readonly Dictionary<ExplodedGraphNode, HashSet<IFact>> _summaryEdges = new();
+    private readonly ConcurrentDictionary<ExplodedGraphNode, HashSet<IFact>> _summaryEdges = new();
 
     // analysis result map: node -> facts that reach it (excluding ZeroFact)
-    private readonly Dictionary<ICFGNode, HashSet<TaintFact>> _results = new();
-
+    private readonly ConcurrentDictionary<ICFGNode, HashSet<TaintFact>> _results = new();
 
     // Maps: (calleeEntryNode, entryFact) -> Set of (callSiteNode, callSiteFact) that caused it
-    private readonly Dictionary<ExplodedGraphNode, HashSet<ExplodedGraphNode>> _callContextMap = new();
+    private readonly ConcurrentDictionary<ExplodedGraphNode, HashSet<ExplodedGraphNode>> _callContextMap = new();
 
-    private readonly Queue<ExplodedGraphNode> _workQueue = new();
-    private readonly HashSet<ExplodedGraphNode> _inQueue = new();
+    // Work queue with concurrent access
+    private readonly ConcurrentQueue<ExplodedGraphNode> _workQueue = new();
+    private readonly ConcurrentDictionary<ExplodedGraphNode, bool> _inQueue = new();
 
-    public IFDSSolver(IFDSTabulationProblem problem)
+    // Cache for frequently accessed edges
+    private readonly ConcurrentDictionary<ICFGNode, IEnumerable<ICFGEdge>> _edgeCache = new();
+
+    public IFDSSolver(IFDSTabulationProblem problem, CancellationToken cancellationToken = default)
     {
-        _problem = problem;
-        _graph = problem.Graph;
+        _problem = problem ?? throw new ArgumentNullException(nameof(problem));
+        _graph = problem.Graph ?? throw new ArgumentNullException(nameof(problem), "Problem.Graph cannot be null");
+        _cancellationToken = cancellationToken;
     }
 
     public async Task<IFDSAnalysisResult> Solve()
     {
         Initialize();
-        await ProcessWorklist();
-        return new IFDSAnalysisResult(_results, _pathEdges);
+        await ProcessWorklistAsync().ConfigureAwait(false);
+        return new IFDSAnalysisResult(_results.ToDictionary(kv => kv.Key, kv => kv.Value),
+                                     _pathEdges.ToDictionary(kv => kv.Key, kv => kv.Value));
     }
 
     // Seeding
     private void Initialize()
     {
+        // Clear all state
         _results.Clear();
-        _workQueue.Clear();
-        _inQueue.Clear();
         _pathEdges.Clear();
         _summaryEdges.Clear();
+        _callContextMap.Clear();
+        _edgeCache.Clear();
 
-        var initial = _problem.InitialSeeds;
-        foreach (var (node, facts) in initial)
+        // Clear work queue
+        while (_workQueue.TryDequeue(out _)) { }
+        _inQueue.Clear();
+
+        // Seed the analysis with initial facts
+        var initialSeeds = _problem.InitialSeeds;
+        foreach (var (node, facts) in initialSeeds)
         {
             foreach (var fact in facts)
             {
-                Propagate(new ExplodedGraphNode(node, fact), new ExplodedGraphNode(node, fact));
+                var seedState = new ExplodedGraphNode(node, fact);
+                Propagate(seedState, seedState);
             }
         }
     }
 
-    private async Task ProcessWorklist()
+    private async Task ProcessWorklistAsync()
     {
-        while (_workQueue.Count > 0)
+        while (TryDequeueWork(out var currentState))
         {
-            var currentExplodedNode = _workQueue.Dequeue();
-            _inQueue.Remove(currentExplodedNode);
-            var (currentNode, currentFact) = currentExplodedNode; // Deconstruct
+            _cancellationToken.ThrowIfCancellationRequested();
 
-            foreach (var edge in await _graph.GetOutgoingEdgesAsync(currentNode))
+            var (currentNode, currentFact) = currentState;
+
+            try
+            {
+                var edges = await GetCachedOutgoingEdgesAsync(currentNode).ConfigureAwait(false);
+                await ProcessEdgesAsync(edges, currentState).ConfigureAwait(false);
+            }
+            catch (Exception ex)
             {
 
-                var targetNode = edge.To;
+            }
+        }
+    }
 
-                switch (edge.Type)
+    private async Task<IEnumerable<ICFGEdge>> GetCachedOutgoingEdgesAsync(ICFGNode node)
+    {
+        if (_edgeCache.TryGetValue(node, out var cachedEdges))
+        {
+            return cachedEdges;
+        }
+
+        var edges = await _graph.GetOutgoingEdgesAsync(node, _cancellationToken).ConfigureAwait(false);
+        var edgeList = edges.ToList(); // Materialize to avoid multiple enumerations
+        _edgeCache.TryAdd(node, edgeList);
+        return edgeList;
+    }
+
+    private async Task ProcessEdgesAsync(IEnumerable<ICFGEdge> edges, ExplodedGraphNode currentState)
+    {
+        var tasks = edges.Select(edge => ProcessSingleEdgeAsync(edge, currentState));
+        await Task.WhenAll(tasks).ConfigureAwait(false);
+    }
+
+    private async Task ProcessSingleEdgeAsync(ICFGEdge edge, ExplodedGraphNode currentState)
+    {
+        var (currentNode, currentFact) = currentState;
+
+        try
+        {
+            switch (edge.Type)
+            {
+                case EdgeType.Intraprocedural:
+                    HandleIntraprocedural(edge, currentFact, currentState);
+                    break;
+
+                case EdgeType.Call:
+                    await HandleCallAsync(edge, currentFact, currentState).ConfigureAwait(false);
+                    break;
+
+                case EdgeType.Return:
+                    await HandleReturnAsync(edge, currentFact, currentState).ConfigureAwait(false);
+                    break;
+
+                case EdgeType.CallToReturn:
+                    HandleCallToReturn(edge, currentFact, currentState);
+                    break;
+
+                default:
+                    Console.WriteLine($"Unknown edge type: {edge.Type}");
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error processing edge {edge.Type} from {edge.From} to {edge.To}: {ex.Message}");
+        }
+    }
+
+
+    private void HandleCallToReturn(ICFGEdge edge, IFact currentFact, ExplodedGraphNode currentState)
+    {
+        try
+        {
+            var flowFunction = _problem.FlowFunctions.GetCallToReturnFlowFunction(edge);
+            var successors = flowFunction?.ComputeTargets(currentFact) ?? Enumerable.Empty<IFact>();
+
+            foreach (var successorFact in successors)
+            {
+                Propagate(new ExplodedGraphNode(edge.To, successorFact), currentState);
+            }
+        } catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error in HandleCallToReturn: {ex.Message}");
+        }
+
+    }
+
+    private void HandleIntraprocedural(ICFGEdge edge, IFact currentFact, ExplodedGraphNode currentState)
+    {
+        try
+        {
+            var flowFunction = _problem.FlowFunctions.GetNormalFlowFunction(edge);
+            var successors = flowFunction?.ComputeTargets(currentFact) ?? Enumerable.Empty<IFact>();
+            foreach (var successorFact in successors)
+            {
+                Propagate(new ExplodedGraphNode(edge.To, successorFact), currentState);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error in HandleIntraprocedural: {ex.Message}");
+        }
+    }
+
+
+    private async Task HandleCallAsync(ICFGEdge callEdge, IFact callSiteFact, ExplodedGraphNode callSiteState)
+    {
+        try
+        {
+            var callSiteNode = callEdge.From;
+            var calleeEntryNode = _graph.GetEntryNode(callEdge.To);
+
+            var flowFunction = _problem.FlowFunctions.GetCallFlowFunction(callEdge);
+            var entryFacts = flowFunction?.ComputeTargets(callSiteFact) ?? new HashSet<IFact>();
+
+            foreach (var entryFact in entryFacts)
+            {
+                var summaryKey = new ExplodedGraphNode(calleeEntryNode, entryFact);
+
+                if (_summaryEdges.TryGetValue(summaryKey, out var cachedExitFacts))
                 {
-                    case EdgeType.Intraprocedural:
-                        HandleIntraprocedural(edge, currentFact, currentExplodedNode);
-                        break;
-
-                    case EdgeType.Call:
-                        HandleCall(edge, currentFact, currentExplodedNode);
-                        break;
-
-                    case EdgeType.Return:
-                        HandleReturn(edge, currentFact, currentExplodedNode);
-                        break;
-
-                    case EdgeType.CallToReturn:
-                        HandleCallToReturn(edge, currentFact, currentExplodedNode);
-                        break;
+                    await ApplyCachedSummaryAsync(callEdge, callSiteState, cachedExitFacts).ConfigureAwait(false);
+                    continue;
                 }
+
+                // No cached summary - propagate into callee and record call context
+                var calleeEntryState = new ExplodedGraphNode(calleeEntryNode, entryFact);
+                Propagate(calleeEntryState, callSiteState);
+
+                // Record call context for later return processing
+                var callersSet = _callContextMap.GetOrAdd(calleeEntryState, _ => new HashSet<ExplodedGraphNode>());
+                lock (callersSet)
+                {
+                    callersSet.Add(callSiteState);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error in HandleCall: {ex.Message}");
+        }
+    }
+
+
+    private async Task ApplyCachedSummaryAsync(ICFGEdge callEdge, ExplodedGraphNode callSiteState, HashSet<IFact> cachedExitFacts)
+    {
+        var callToReturnEdge = await FindCallToReturnEdgeAsync(callEdge.From).ConfigureAwait(false);
+        if (callToReturnEdge?.To == null) return;
+
+        var returnFlowFunction = _problem.FlowFunctions.GetReturnFlowFunction(null, callEdge.From);
+
+        foreach (var exitFact in cachedExitFacts)
+        {
+            var returnSiteFacts = returnFlowFunction?.ComputeTargets(exitFact) ?? Enumerable.Empty<IFact>();
+
+            foreach (var returnFact in returnSiteFacts)
+            {
+                Propagate(new ExplodedGraphNode(callToReturnEdge.To, returnFact), callSiteState);
+            }
+        }
+    }
+
+    private async Task<ICFGEdge?> FindCallToReturnEdgeAsync(ICFGNode callSiteNode)
+    {
+        var edges = await GetCachedOutgoingEdgesAsync(callSiteNode).ConfigureAwait(false);
+        return edges.FirstOrDefault(e => e.Type == EdgeType.CallToReturn);
+    }
+
+
+    private async Task HandleReturnAsync(ICFGEdge returnEdge, IFact exitFact, ExplodedGraphNode calleeExitState)
+    {
+        try
+        {
+            var calleeExitNode = returnEdge.From;
+            var calleeEntryNode = _graph.GetEntryNode(calleeExitNode);
+
+            // Find all relevant entry states for this callee
+            var relevantEntryStates = _callContextMap.Keys
+                .Where(k => k.Node.Equals(calleeEntryNode))
+                .ToList();
+
+            var processingTasks = relevantEntryStates.Select(entryState =>
+                ProcessReturnForEntryStateAsync(entryState, returnEdge, exitFact, calleeExitState));
+
+            await Task.WhenAll(processingTasks).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error in HandleReturn: {ex.Message}");
+        }
+    }
+
+    private async Task ProcessReturnForEntryStateAsync(
+        ExplodedGraphNode entryState,
+        ICFGEdge returnEdge,
+        IFact exitFact,
+        ExplodedGraphNode calleeExitState)
+    {
+        if (!_callContextMap.TryGetValue(entryState, out var callingStates)) return;
+
+        List<ExplodedGraphNode> callers;
+        lock (callingStates)
+        {
+            callers = callingStates.ToList(); // Create snapshot to avoid holding lock
+        }
+
+        foreach (var callSiteState in callers)
+        {
+            var (callSiteNode, _) = callSiteState;
+
+            // Find the return site node
+            var callToReturnEdge = await FindCallToReturnEdgeAsync(callSiteNode).ConfigureAwait(false);
+            var returnSiteNode = callToReturnEdge?.To;
+
+            if (returnSiteNode == null) continue;
+
+            // Compute return facts
+            var returnFlowFunction = _problem.FlowFunctions.GetReturnFlowFunction(returnEdge, callSiteNode);
+            var returnSiteFacts = returnFlowFunction?.ComputeTargets(exitFact) ?? Enumerable.Empty<IFact>();
+            var materializedFacts = returnSiteFacts.ToList();
+
+            // Add summary for caching
+            AddSummary(entryState.Node, entryState.Fact, materializedFacts);
+
+            // Propagate results to the return site
+            foreach (var returnFact in materializedFacts)
+            {
+                Propagate(new ExplodedGraphNode(returnSiteNode, returnFact), calleeExitState);
             }
         }
     }
@@ -98,163 +317,52 @@ public class IFDSSolver
         // Record taint facts in the user-visible result
         if (targetFact is TaintFact taintFact)
         {
-            if (!_results.TryGetValue(targetNode, out var set))
-                _results[targetNode] = set = new HashSet<TaintFact>();
-            set.Add(taintFact);
+            var resultSet = _results.GetOrAdd(targetNode, _ => new HashSet<TaintFact>());
+            lock (resultSet)
+            {
+                resultSet.Add(taintFact);
+            }
         }
 
         // Track all facts (including ZeroFact) in the path-edge graph
-        var key = targetState;
-        if (!_pathEdges.TryGetValue(key, out var preds))
-            _pathEdges[key] = preds = new HashSet<ExplodedGraphNode>();
+        var predessorSet = _pathEdges.GetOrAdd(targetState, _ => new HashSet<ExplodedGraphNode>());
+        bool isNewEdge;
 
-        // Only add the predecessor if it's new to avoid infinite loops on cycles if not using _inQueue
-        // (though _inQueue handles the worklist part, path edges can still cycle)
-        if (preds.Add(predecessorState))
+        lock (predessorSet)
         {
-            // If a new path edge is discovered, potentially add target to worklist
-            if (_inQueue.Add(key)) // Check if (targetNode, targetFact) is already in the work queue
+            isNewEdge = predessorSet.Add(predecessorState);
+        }
+
+        // Only add to worklist if this is a new path edge
+        if (isNewEdge)
+        {
+            if (_inQueue.TryAdd(targetState, true))
             {
-                _workQueue.Enqueue(key);
+                _workQueue.Enqueue(targetState);
             }
         }
     }
 
-
-    private void HandleCallToReturn(ICFGEdge edge, IFact currentFact, ExplodedGraphNode currentState)
+    private bool TryDequeueWork(out ExplodedGraphNode state)
     {
-        var normalFlow = _problem.FlowFunctions.GetCallToReturnFlowFunction(edge);
-        var successors = normalFlow?.ComputeTargets(currentFact) ?? Enumerable.Empty<IFact>();
-
-        var targetNode = edge.To;
-        foreach (var successorFact in successors)
+        if (_workQueue.TryDequeue(out state))
         {
-            Propagate(new ExplodedGraphNode(targetNode, successorFact), currentState);
+            _inQueue.TryRemove(state, out _);
+            return true;
         }
+        state = default;
+        return false;
     }
 
-    private void HandleIntraprocedural(ICFGEdge edge, IFact currentFact, ExplodedGraphNode currentState)
-    {
-        var normalFlow = _problem.FlowFunctions.GetNormalFlowFunction(edge);
-        var successors = normalFlow?.ComputeTargets(currentFact) ?? Enumerable.Empty<IFact>();
-        var targetNode = edge.To;
-
-        foreach (var successorFact in successors)
-        {
-            Propagate(new ExplodedGraphNode(targetNode, successorFact), currentState);
-        }
-    }
-
-
-    // Call edge handling (non-zero facts)
-    private void HandleCall(ICFGEdge callEdge, IFact callSiteFact, ExplodedGraphNode callSiteState)
-    {
-        var callSiteNode = callEdge.From;
-        var calleeEntryNode = _graph.GetEntryNode(callEdge.To);
-
-        var callFlowFunction = _problem.FlowFunctions.GetCallFlowFunction(callEdge);
-        var entryFacts = callFlowFunction?.ComputeTargets(callSiteFact) ?? new HashSet<IFact>();
-
-        foreach (var entryFact in entryFacts)
-        {
-            var summaryKey = new ExplodedGraphNode(calleeEntryNode, entryFact);
-            if (_summaryEdges.TryGetValue(summaryKey, out var cachedExitFacts))
-            {
-                var callToReturnEdgeTarget = _graph
-                    .GetOutgoingEdgesAsync(callEdge.From)
-                    .Result
-                    .FirstOrDefault(e => e.Type == EdgeType.CallToReturn && e.From.Equals(callEdge.From))?.To;
-
-                if (callToReturnEdgeTarget != null)
-                {
-                    foreach (var exitFact in cachedExitFacts)
-                    {
-                        var returnFunction = _problem.FlowFunctions.GetReturnFlowFunction(null, callSiteNode);
-                        var returnSiteFacts = returnFunction?.ComputeTargets(exitFact) ?? new HashSet<IFact>();
-
-                        foreach (var returnFact in returnSiteFacts)
-                        {
-                            Propagate(new ExplodedGraphNode(callToReturnEdgeTarget, returnFact), callSiteState);
-                            continue;
-                        }
-                    }
-                }
-                continue;
-            }
-
-            // Store call context
-            var calleeEntryState = new ExplodedGraphNode(calleeEntryNode, entryFact);
-
-            // Propagate fact into calle entry
-            Propagate(calleeEntryState, callSiteState);
-
-            if (!_callContextMap.TryGetValue(calleeEntryState, out var callers))
-            {
-                callers = new HashSet<ExplodedGraphNode>();
-                _callContextMap[calleeEntryState] = callers;
-            }
-
-            callers.Add(callSiteState);
-
-
-        }
-    }
-
-    // Return edge handling (non-zero facts)
-    private void HandleReturn(ICFGEdge returnEdge, IFact exitFact, ExplodedGraphNode calleeExitState)
-    {
-        var calleeExitNode = returnEdge.From;
-        var calleeEntryNode = _graph.GetEntryNode(calleeExitNode);
-        if (calleeExitNode == null) return;
-
-        var relevantEntryStates = _callContextMap.Keys.Where(k => k.Node.Equals(calleeEntryNode));
-
-        foreach (var entryState in relevantEntryStates)
-        {
-            var entryFact = entryState.Fact;
-
-            if (_callContextMap.TryGetValue(entryState, out var callingStates))
-            {
-                foreach (var callSiteState in callingStates)
-                {
-                    var (callSiteNode, callSiteFact) = callSiteState;
-
-                    // Find the return site node
-                    var callToReturnEdge = _graph.GetOutgoingEdgesAsync(callSiteNode).Result.FirstOrDefault(e => e.Type == EdgeType.CallToReturn);
-                    var returnSiteNode = callToReturnEdge?.To;
-
-                    if (returnSiteNode != null)
-                    {
-                        // Instantiate ReturnFlow with callsite
-                        var returnFlowFunction = _problem.FlowFunctions.GetReturnFlowFunction(returnEdge, callSiteNode);
-
-                        // Compute targets
-                        var returnSiteFacts = returnFlowFunction.ComputeTargets(exitFact);
-
-                        // Add summary
-                        if (entryFact is TaintFact entryTaintFact)
-                        {
-                            AddSummary(calleeEntryNode, entryTaintFact, returnSiteFacts);
-                        }
-
-                        // Propagate results to the return site node
-                        foreach (var returnFact in returnSiteFacts)
-                        {
-                            Propagate(new ExplodedGraphNode(returnSiteNode, returnFact), calleeExitState);
-                        }
-                    }
-                }
-            }
-        }
-    }
     private void AddSummary(ICFGNode calleeEntry, IFact entryFact, IEnumerable<IFact> outFacts)
     {
         var key = new ExplodedGraphNode(calleeEntry, entryFact);
-        if (!_summaryEdges.TryGetValue(key, out var set))
+        var summarySet = _summaryEdges.GetOrAdd(key, _ => new HashSet<IFact>());
+
+        lock (summarySet)
         {
-            _summaryEdges[key] = set = new HashSet<IFact>();
+            summarySet.UnionWith(outFacts);
         }
-        set.UnionWith(outFacts);
     }
 
 }
