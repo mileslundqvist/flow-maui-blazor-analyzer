@@ -7,13 +7,27 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="Analysis\Taint\**" />
+    <EmbeddedResource Remove="Analysis\Taint\**" />
+    <None Remove="Analysis\Taint\**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.13.0" />
     <PackageReference Include="Microsoft.CodeAnalysis.Workspaces.Common" Version="4.13.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.3" />
   </ItemGroup>
 
   <ItemGroup>
-    <Folder Include="TaintEngine\Sanitizers\" />
+    <None Update="Interprocedural\DB\sanitizers-spec.json">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="Interprocedural\DB\sinks-spec.json">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Update="Interprocedural\DB\sources-spec.json">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
 </Project>

@@ -1,31 +1,71 @@
 ﻿
-using MauiBlazorAnalyzer.Application;
-using MauiBlazorAnalyzer.Core;
-using MauiBlazorAnalyzer.Core.Rules;
-using MauiBlazorAnalyzer.Infrastructure;
+using MauiBlazorAnalyzer.Core.Analysis;
+using MauiBlazorAnalyzer.Core.Analysis.Interfaces;
 using Microsoft.Build.Locator;
 using Microsoft.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
+using MauiBlazorAnalyzer.Infrastructure;
+using MauiBlazorAnalyzer.Application;
 
 class Program
 {
+
+
     static async Task<int> Main(string[] args)
     {
-        // --- MSBuild Locator ---
-        if (!MSBuildLocator.IsRegistered)
+
+        RegisterMsBuildLocator();
+
+        RootCommand rootCommand = ParseCommandLineOptions();
+
+        int returnValue = await rootCommand.InvokeAsync(args);
+
+        return returnValue;
+    }
+
+
+    private static async Task RunAnalysisAsync(AnalysisOptions options)
+    {
+        var services = new ServiceCollection();
+
+        services.AddLogging(configure => configure.AddConsole());
+
+        // Register Infrastructure Service
+        services.AddSingleton<IProjectLoader, ProjectLoader>();
+
+        if (options.OutputFormat.Equals("console", StringComparison.OrdinalIgnoreCase))
         {
-            var instance = MSBuildLocator.QueryVisualStudioInstances().OrderByDescending(i => i.Version).FirstOrDefault();
-            if (instance == null)
-            {
-                Console.Error.WriteLine("Error: No compatible MSBuild instance found. Ensure .NET SDK is installed.");
-                return 1;
-            }
-            MSBuildLocator.RegisterInstance(instance);
+            services.AddSingleton<IReporter, ConsoleReporter>();
+        }
+        else
+        {
+            throw new NotImplementedException();
         }
 
-        // --- Command Line Parsing (using System.CommandLine) ---
+        services.AddTransient<AnalysisOrchestrator>();
+
+
+        // Build Service Provider
+        var serviceProvider = services.BuildServiceProvider();
+
+
+        // --- Run Analysis ---
+        var orchestrator = serviceProvider.GetRequiredService<AnalysisOrchestrator>();
+        var cancellationTokenSource = new CancellationTokenSource();
+
+        Console.CancelKeyPress += (sender, e) => {
+            e.Cancel = true;
+            Console.WriteLine("Cancellation requested...");
+            cancellationTokenSource.Cancel();
+        };
+
+        await orchestrator.RunAnalysisAsync(options, cancellationTokenSource.Token);
+    }
+
+    private static RootCommand ParseCommandLineOptions()
+    {
         var inputPathOption = new Option<string>(
             name: "--input-path",
             description: "Path to the .sln or .csproj file to analyze.")
@@ -60,55 +100,26 @@ class Program
                 OutputPath = context.ParseResult.GetValueForOption(outputPathOption),
                 MinimumSeverity = context.ParseResult.GetValueForOption(severityOption)
             };
-            await RunAnalysisWithDI(options);
+            await RunAnalysisAsync(options);
         });
 
-        return await rootCommand.InvokeAsync(args);
+        return rootCommand;
+
     }
 
-    static async Task RunAnalysisWithDI(AnalysisOptions options)
+
+    private static void RegisterMsBuildLocator()
     {
-        var services = new ServiceCollection();
-
-        services.AddLogging(configure => configure.AddConsole());
-
-
-        // Register Infrastructure Services
-        services.AddSingleton<IProjectLoader, RoslynProjectLoader>();
-        
-        if (options.OutputFormat.Equals("console", StringComparison.OrdinalIgnoreCase))
+        if (!MSBuildLocator.IsRegistered)
         {
-            services.AddSingleton<IReporter, ConsoleReporter>();
-        }
-        else
-        {
-            // TODO: Add registration for other reporters (e.g., JsonReporter)
-            services.AddSingleton<IReporter>(sp =>
+            var instance = MSBuildLocator.QueryVisualStudioInstances().OrderByDescending(i => i.Version).FirstOrDefault();
+            if (instance == null)
             {
-                Console.Error.WriteLine($"Output format '{options.OutputFormat}' not yet implemented. Using console.");
-                return ActivatorUtilities.CreateInstance<ConsoleReporter>(sp); // Fallback
-            });
+                Console.Error.WriteLine("Error: No compatible MSBuild instance found. Ensure .NET SDK is installed.");
+                Environment.Exit(1);
+            }
+            MSBuildLocator.RegisterInstance(instance);
         }
-
-        services.AddTransient<AnalysisOrchestrator>();
-
-        // Register Analyzers (Rule Discovery)
-        //services.AddTransient<IAnalyzer, JsInvokableMethodAnalyzer>();
-        //services.AddTransient<IAnalyzer, JsInvokableIntraproceduralSinkAnalyzer>();
-
-        // Build Service Provider
-        var serviceProvider = services.BuildServiceProvider();
-
-        // --- Run Analysis ---
-        var orchestrator = serviceProvider.GetRequiredService<AnalysisOrchestrator>();
-        var cancellationTokenSource = new CancellationTokenSource();
-        // Handle Ctrl+C for cancellation
-        Console.CancelKeyPress += (sender, e) => {
-            e.Cancel = true;
-            Console.WriteLine("Cancellation requested...");
-            cancellationTokenSource.Cancel();
-        };
-
-        await orchestrator.RunAnalysisAsync(options, cancellationTokenSource.Token);
     }
+
 }
