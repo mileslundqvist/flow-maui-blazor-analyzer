@@ -12,7 +12,7 @@ public sealed class TaintSpecDB
         SymbolDisplayMemberOptions.IncludeParameters,
     parameterOptions:
         SymbolDisplayParameterOptions.IncludeType |
-        SymbolDisplayParameterOptions.IncludeParamsRefOut, 
+        SymbolDisplayParameterOptions.IncludeParamsRefOut,
     miscellaneousOptions:
         SymbolDisplayMiscellaneousOptions.EscapeKeywordIdentifiers
 );
@@ -39,14 +39,14 @@ public sealed class TaintSpecDB
         }
 
         return false;
-    } 
+    }
     public bool IsSanitizer(IMethodSymbol m) => m != null && _sanitizers.Contains(m.OriginalDefinition.ToDisplayString());
 
     private readonly HashSet<string> _sources = new(StringComparer.Ordinal);
     private readonly HashSet<string> _sinks = new(StringComparer.Ordinal);
     private readonly HashSet<string> _sanitizers = new(StringComparer.Ordinal);
-    
-    private TaintSpecDB() 
+
+    private TaintSpecDB()
     {
 
         string assemblyLocation = AppContext.BaseDirectory;
@@ -65,7 +65,7 @@ public sealed class TaintSpecDB
     {
         try
         {
-            if (File.Exists(FilePath)) 
+            if (File.Exists(FilePath))
             {
                 string jsonContent = File.ReadAllText(FilePath);
                 var specContent = JsonSerializer.Deserialize<TaintSpecFileContent>(jsonContent, new JsonSerializerOptions
@@ -85,17 +85,14 @@ public sealed class TaintSpecDB
         catch (JsonException jsonEx)
         {
             Console.Error.WriteLine($"Error parsing taint specification file {FilePath}: {jsonEx.Message}");
-            // Handle error, maybe throw or continue with empty sets
         }
         catch (IOException ioEx)
         {
             Console.Error.WriteLine($"Error reading taint specification file {FilePath}: {ioEx.Message}");
-            // Handle error
         }
-        catch (System.Exception ex) // Catch other potential errors
+        catch (System.Exception ex)
         {
             Console.Error.WriteLine($"Unexpected error loading taint specification from {FilePath}: {ex.Message}");
-            // Handle error
         }
     }
 }

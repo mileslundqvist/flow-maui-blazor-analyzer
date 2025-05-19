@@ -1,6 +1,6 @@
 ﻿using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Operations;
 using System.Xml.Linq;
 
@@ -152,7 +152,7 @@ public class BlazorEntryPointAnalyzer
                         if (valueArg == null && invocationOp.Arguments.Length > 2) valueArg = invocationOp.Arguments[2]; // Fallback to index
 
 
-                        if (valueArg?.Value is IInvocationOperation valueInvocation )
+                        if (valueArg?.Value is IInvocationOperation valueInvocation)
                         {
                             IDelegateCreationOperation? delegateCreation = null;
 
@@ -536,7 +536,7 @@ internal class EventHandlerSyntaxWalker : CSharpSyntaxWalker
 
     public EventHandlerSyntaxWalker(SemanticModel semanticModel,
         INamedTypeSymbol? renderTreeBuilderSymbol,
-        INamedTypeSymbol? eventCallbackFactorySymbol, 
+        INamedTypeSymbol? eventCallbackFactorySymbol,
         INamedTypeSymbol componentTypeSymbol,
         List<EntryPointInfo> entryPoints)
     {

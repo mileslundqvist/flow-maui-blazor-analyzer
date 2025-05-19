@@ -11,7 +11,7 @@ internal sealed class ReturnFlow : BaseFlowFunction
 
     public ReturnFlow(ICFGEdge e, ICFGNode callSite, TaintSpecDB db, List<EntryPointInfo> entryPoints)
         : base(e, db, entryPoints)
-    { 
+    {
         _callSite = callSite;
     }
 
@@ -37,19 +37,7 @@ internal sealed class ReturnFlow : BaseFlowFunction
                 // Create a new fact rooted at the assignment target.
                 outSet.Add(new TaintFact(new AccessPath(destinationSymbol, ImmutableArray<IFieldSymbol>.Empty)));
             }
-            //outSet.Add(inFact); Should not add the exit fact to propogate back into the caller as this will not have
-            // relevance inside the caller
         }
-        else
-        {
-            //outSet.Add(inFact); Should not add the exit fact to propogate back into the caller as this will not have
-            // relevance inside the caller
-        }
-
-
-        // Case 2: Handling facts related to parameters or fields modified within the callee
-
-
         return outSet;
     }
 }

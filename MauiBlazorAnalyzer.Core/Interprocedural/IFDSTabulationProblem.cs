@@ -1,6 +1,4 @@
-﻿using Microsoft.CodeAnalysis;
-
-namespace MauiBlazorAnalyzer.Core.Interprocedural;
+﻿namespace MauiBlazorAnalyzer.Core.Interprocedural;
 public interface IFDSTabulationProblem
 {
     IReadOnlyDictionary<ICFGNode, ISet<IFact>> InitialSeeds { get; }

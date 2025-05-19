@@ -1,6 +1,5 @@
 ﻿using MauiBlazorAnalyzer.Core.Intraprocedural.Context;
 using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace MauiBlazorAnalyzer.Core.Interprocedural;
 
@@ -11,7 +10,7 @@ public class ICFGNode
     public IOperation Operation { get; }
     public MethodAnalysisContext MethodContext { get; }
     public ICFGNodeKind Kind { get; }
-    
+
 
     public ICFGNode(IOperation operation, MethodAnalysisContext context, ICFGNodeKind kind = ICFGNodeKind.Normal)
     {

@@ -1,7 +1,7 @@
-﻿using MauiBlazorAnalyzer.Core.Interprocedural.DB;
-using Microsoft.CodeAnalysis.Operations;
+﻿using MauiBlazorAnalyzer.Core.Analysis;
+using MauiBlazorAnalyzer.Core.Interprocedural.DB;
 using Microsoft.CodeAnalysis;
-using MauiBlazorAnalyzer.Core.Analysis;
+using Microsoft.CodeAnalysis.Operations;
 using System.Collections.Immutable;
 using System.Text;
 
@@ -50,7 +50,7 @@ public sealed class TaintDiagnosticReporter
                     HashSet<ISymbol> contributingSymbols = FindContributingBaseSymbols(arg.Value);
 
                     if (!contributingSymbols.Any()) continue; // No symbols found for this argument
-                    
+
                     foreach (TaintFact fact in facts)
                     {
                         if (fact?.Path?.Base == null) break;

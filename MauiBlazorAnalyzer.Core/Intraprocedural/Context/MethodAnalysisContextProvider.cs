@@ -1,6 +1,6 @@
 ﻿using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace MauiBlazorAnalyzer.Core.Intraprocedural.Context;
 public static class MethodAnalysisContextProvider

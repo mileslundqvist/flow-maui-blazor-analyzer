@@ -5,7 +5,6 @@ using Microsoft.CodeAnalysis.FlowAnalysis;
 using Microsoft.CodeAnalysis.Operations;
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
-using System.Threading.Tasks;
 
 namespace MauiBlazorAnalyzer.Core.Interprocedural;
 public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
@@ -38,7 +37,7 @@ public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
 
         ArgumentNullException.ThrowIfNull(initialMethodSymbols);
 
-        
+
         foreach (var methodSymbol in initialMethodSymbols)
         {
             var entryNode = GetOrAddEntryNode(methodSymbol);
@@ -88,8 +87,8 @@ public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
     public ICFGEdge? TryGetCallEdge(ICFGNode callSite, ICFGNode calleeEntry)
     {
         EnsureSuccessorsComputed(callSite);
-        return _successors.TryGetValue(callSite, out var list) 
-            ? list.FirstOrDefault(e => e.Type == EdgeType.Call && e.To.Equals(calleeEntry)) 
+        return _successors.TryGetValue(callSite, out var list)
+            ? list.FirstOrDefault(e => e.Type == EdgeType.Call && e.To.Equals(calleeEntry))
             : null;
     }
 
@@ -225,7 +224,7 @@ public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
                     {
                         // Ensure list exists and add the caller info
                         var callersList = _callers.GetOrAdd(callee, _ => new List<(ICFGNode, ICFGNode)>());
-                        
+
                         lock (callersList)
                         {
                             // Avoid adding duplicates if somehow processed twice (shouldn't happen with GetOrAdd logic)
@@ -370,9 +369,9 @@ public class InterproceduralCFG : IInterproceduralCFG<ICFGNode, IMethodSymbol>
         else
         {
             if (operation is IInvocationOperation ||
-                (operation is ISimpleAssignmentOperation assignOp && 
+                (operation is ISimpleAssignmentOperation assignOp &&
                 (assignOp.Value is IInvocationOperation || assignOp.Value is IAwaitOperation)) ||
-                (operation is IExpressionStatementOperation exprOp && (exprOp.Operation is IInvocationOperation || 
+                (operation is IExpressionStatementOperation exprOp && (exprOp.Operation is IInvocationOperation ||
                 (exprOp.Operation is ISimpleAssignmentOperation innerAssignOp && innerAssignOp.Value is IInvocationOperation))))
             {
                 kind = ICFGNodeKind.CallSite;

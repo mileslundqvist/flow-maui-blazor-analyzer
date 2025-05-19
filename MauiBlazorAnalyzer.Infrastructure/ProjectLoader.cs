@@ -50,8 +50,8 @@ public class ProjectLoader : IProjectLoader
     }
 
     private async Task LoadProjectCompilationsAsync(
-        ImmutableArray<(Project project, Compilation? Compilation)>.Builder results, 
-        Solution solution, 
+        ImmutableArray<(Project project, Compilation? Compilation)>.Builder results,
+        Solution solution,
         CancellationToken cancellationToken)
     {
 

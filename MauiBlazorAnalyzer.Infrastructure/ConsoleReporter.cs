@@ -82,7 +82,7 @@ public class ConsoleReporter : IReporter
 
 
             Console.ForegroundColor = ConsoleColor.Gray; // Subtle color for the detailed message body
-            
+
             // Split the message by lines and print each one indented
             var messageLines = diag.Message.Split(new[] { Environment.NewLine }, StringSplitOptions.None);
             foreach (var line in messageLines)

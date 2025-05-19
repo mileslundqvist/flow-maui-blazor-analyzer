@@ -1,6 +1,4 @@
-﻿using Microsoft.CodeAnalysis.CSharp.Syntax;
-
-namespace MauiBlazorAnalyzer.Core.Interprocedural;
+﻿namespace MauiBlazorAnalyzer.Core.Interprocedural;
 
 public class IFDSSolver
 {
@@ -196,7 +194,7 @@ public class IFDSSolver
 
             callers.Add(callSiteState);
 
-              
+
         }
     }
 

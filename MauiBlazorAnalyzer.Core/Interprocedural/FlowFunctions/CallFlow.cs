@@ -87,7 +87,6 @@ internal sealed class CallFlow : BaseFlowFunction
                 calleeMethod = assignObj.Constructor;
                 arguments = assignObj.Arguments;
                 return calleeMethod != null;
-            // TODO: Add other relevant patterns if needed (e.g., call within ExpressionStatementSyntax?)
             case IExpressionStatementOperation expressionStatement:
                 switch (expressionStatement.Operation)
                 {
@@ -95,7 +94,7 @@ internal sealed class CallFlow : BaseFlowFunction
                         calleeMethod = exprInv.TargetMethod;
                         arguments = exprInv.Arguments;
                         return calleeMethod != null;
-                    default: 
+                    default:
                         return false;
                 }
 
@@ -113,7 +112,7 @@ internal sealed class CallFlow : BaseFlowFunction
     {
         foreach (var arg in arguments)
         {
-           
+
             if (callSiteFact is TaintFact callSiteTaintFact)
             {
                 // Does the incoming fact represent the value passed to this specific argument?
@@ -134,8 +133,8 @@ internal sealed class CallFlow : BaseFlowFunction
 
                     var valueSymbol = GetOperationSymbol(arg.Value);
 
-                    if (arg.Parameter != null 
-                        && valueSymbol != null 
+                    if (arg.Parameter != null
+                        && valueSymbol != null
                         && SymbolEqualityComparer.Default.Equals(valueSymbol, entryPoint.AssociatedSymbol))
                     {
                         var targetPath = new AccessPath(arg.Parameter, ImmutableArray<IFieldSymbol>.Empty);
@@ -159,8 +158,8 @@ internal sealed class CallFlow : BaseFlowFunction
             ILocalReferenceOperation loc => loc.Local,
             IParameterReferenceOperation parm => parm.Parameter,
             IFieldReferenceOperation fld => fld.Field,
-            IPropertyReferenceOperation prop => prop.Property, // Usually the property symbol itself
-            IInstanceReferenceOperation => null, // 'this' usually isn't the root of taint path directly
+            IPropertyReferenceOperation prop => prop.Property,
+            IInstanceReferenceOperation => null,
             _ => null // Cannot determine symbol for other operation types
         };
     }

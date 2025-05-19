@@ -110,8 +110,8 @@ public class AnalysisOrchestrator
 
 
     private async Task<ImmutableArray<AnalysisDiagnostic>> AnalyzeProjectsAsync(
-        ImmutableArray<(Project Project, Compilation? Compilation)> projectsAndCompilations, 
-        AnalysisStatistics overallStatistics, 
+        ImmutableArray<(Project Project, Compilation? Compilation)> projectsAndCompilations,
+        AnalysisStatistics overallStatistics,
         CancellationToken cancellationToken)
     {
         _logger.LogInformation("Starting analysis of loaded projects...");

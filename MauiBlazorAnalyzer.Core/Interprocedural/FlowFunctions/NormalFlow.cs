@@ -32,7 +32,7 @@ internal sealed class NormalFlow : BaseFlowFunction
         if (!outFacts.Any())
         {
             outFacts.Add(inFact);
-           
+
         }
 
         return outFacts;
@@ -78,7 +78,7 @@ internal sealed class NormalFlow : BaseFlowFunction
         {
             if (entryPoint.Type != EntryPointType.BindingCallback || entryPoint.EntryPointSymbol == null || entryPoint.AssociatedSymbol == null)
                 continue;
-      
+
             var assignmentValueSymbol = GetOperationSymbol(assignmentOp.Value);
             var assignmentTargetSymbol = GetOperationSymbol(assignmentOp.Target);
 
@@ -94,10 +94,9 @@ internal sealed class NormalFlow : BaseFlowFunction
                 var boundTaintFact = new TaintFact(boundVariablePath);
                 outFacts.Add(boundTaintFact);
 
-                // Found the specific assignment, no need to check other entry points for this operation
                 return;
             }
-            
+
         }
     }
 
@@ -239,8 +238,8 @@ internal sealed class NormalFlow : BaseFlowFunction
             ILocalReferenceOperation loc => loc.Local,
             IParameterReferenceOperation parm => parm.Parameter,
             IFieldReferenceOperation fld => fld.Field,
-            IPropertyReferenceOperation prop => prop.Property, // Usually the property symbol itself
-            IInstanceReferenceOperation => null, // 'this' usually isn't the root of taint path directly
+            IPropertyReferenceOperation prop => prop.Property,
+            IInstanceReferenceOperation => null,
             _ => null // Cannot determine symbol for other operation types
         };
     }

@@ -1,13 +1,13 @@
 ﻿
+using MauiBlazorAnalyzer.Application;
 using MauiBlazorAnalyzer.Core.Analysis;
 using MauiBlazorAnalyzer.Core.Analysis.Interfaces;
+using MauiBlazorAnalyzer.Infrastructure;
 using Microsoft.Build.Locator;
 using Microsoft.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using System.CommandLine;
-using MauiBlazorAnalyzer.Infrastructure;
-using MauiBlazorAnalyzer.Application;
 
 class Program
 {
@@ -55,7 +55,8 @@ class Program
         var orchestrator = serviceProvider.GetRequiredService<AnalysisOrchestrator>();
         var cancellationTokenSource = new CancellationTokenSource();
 
-        Console.CancelKeyPress += (sender, e) => {
+        Console.CancelKeyPress += (sender, e) =>
+        {
             e.Cancel = true;
             Console.WriteLine("Cancellation requested...");
             cancellationTokenSource.Cancel();
